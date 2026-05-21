@@ -37,6 +37,8 @@ function App() {
     oscMaxFrequency: 8.0,
     oscScanLines: 100,
     oscMode: 'linear',
+    spacingMin: 2,
+    spacingMax: 10,
   })
   const [autoProcess, setAutoProcess] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -122,7 +124,6 @@ function App() {
             setProgress={setProgress}
             onPathGenerated={setCurrentPath}
             onSizeChange={setCanvasSize}
-            onImageUpload={handleImageUpload}
             zoom={zoom}
             setZoom={setZoom}
           />

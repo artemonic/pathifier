@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import type { Settings, Point } from '../types'
 import { ImageProcessor } from '../utils/imageProcessor'
-import { smoothPath, segmentPath, generateSVG } from '../utils/smoothing'
+import { smoothPath, segmentPath } from '../utils/smoothing'
 import type { Progress } from '../App'
 
 interface DrawingCanvasProps {
@@ -14,7 +14,6 @@ interface DrawingCanvasProps {
   setProgress: (progress: Progress) => void
   onPathGenerated: (path: Point[][]) => void
   onSizeChange: (size: { width: number, height: number }) => void
-  onImageUpload: (imageUrl: string) => void
   zoom: number
   setZoom: (zoom: number) => void
 }
@@ -36,7 +35,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   setProgress,
   onPathGenerated,
   onSizeChange,
-  onImageUpload,
   zoom,
   setZoom
 }) => {
@@ -47,7 +45,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
   const [rawPath, setRawPath] = useState<Point[] | Point[][]>([])
   const [smoothedPath, setSmoothedPath] = useState<Point[][]>([])
-  const [isDragging, setIsDragging] = useState(false)
   const [isComparing, setIsComparing] = useState(false)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
@@ -265,28 +262,6 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     if (autoProcess) {
       // Only rerun on settings that affect the algorithm output
-      const coreSettings = JSON.stringify({
-        algorithm: settings.algorithm,
-        pointCount: settings.pointCount,
-        pointsPerLine: settings.pointsPerLine,
-        dither: settings.dither,
-        oscAmplitude: settings.oscAmplitude,
-        oscFrequencyLevels: settings.oscFrequencyLevels,
-        oscMaxFrequency: settings.oscMaxFrequency,
-        oscScanLines: settings.oscScanLines,
-        oscMode: settings.oscMode,
-        blacks: settings.blacks,
-        whites: settings.whites,
-        midtones: settings.midtones,
-        contrast: settings.contrast,
-        invert: settings.invert,
-        vignetteAmount: settings.vignetteAmount,
-        vignetteWidth: settings.vignetteWidth,
-        vignetteBlur: settings.vignetteBlur,
-        spacingMin: settings.spacingMin,
-        spacingMax: settings.spacingMax
-      })
-      
       const timeoutId = setTimeout(runAlgorithm, 800)
       return () => clearTimeout(timeoutId)
     } else {
