@@ -1,6 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react'
 import type { Settings, Point } from '../types'
-import ImagePreview from './ImagePreview'
 import { ImageProcessor } from '../utils/imageProcessor'
 import { smoothPath, segmentPath } from '../utils/smoothing'
 import type { Progress } from '../App'

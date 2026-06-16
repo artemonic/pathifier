@@ -395,7 +395,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       if (algorithm === 'Delaunay') {
         self.postMessage({ type: 'RESULT', path: solveDelaunay(pts) })
       } else {
-        self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts, imageData) : pts })
+        self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts, imageData, !!clipWhite) : pts })
       }
     }
   }
