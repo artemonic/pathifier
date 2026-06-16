@@ -140,30 +140,28 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
   if (clipWhite) {
     const data = imageData.data
     for (let i = 0; i < data.length; i += 4) {
+      // Threshold for "forbidden" areas
       if (data[i] > 240) isWhite[i / 4] = 1
     }
   }
 
-  const fastDist = (p1: Point, p2: Point): number => {
+  const getDist = (p1: Point, p2: Point): number => {
     const dx = p1.x - p2.x, dy = p1.y - p2.y
-    const d2 = dx * dx + dy * dy
-    const d = Math.sqrt(d2)
-    
-    if (!clipWhite || d < 10) return d
-    
-    const checkPoint = (t: number) => {
-      const sx = Math.floor(p1.x + (p2.x - p1.x) * t)
-      const sy = Math.floor(p1.y + (p2.y - p1.y) * t)
-      if (sx < 0 || sx >= width || sy < 0 || sy >= height) return false
-      return isWhite[sy * width + sx] === 1
-    }
+    return Math.sqrt(dx * dx + dy * dy)
+  }
 
-    // Increased penalty to ensure it really prefers going around
-    if (checkPoint(0.5) || (d > 30 && (checkPoint(0.25) || checkPoint(0.75)))) {
-      return d + d * 50 
-    }
+  // Balanced penalty: Avoid highlights but don't create knots to do it
+  const getPenalty = (p1: Point, p2: Point, d: number): number => {
+    if (!clipWhite || d < 12) return 0
     
-    return d
+    // Sample only midpoint for speed. If midpoint is in white, it's likely crossing.
+    const mx = Math.floor((p1.x + p2.x) * 0.5)
+    const my = Math.floor((p1.y + p2.y) * 0.5)
+    
+    if (mx >= 0 && mx < width && my >= 0 && my < height) {
+      if (isWhite[my * width + mx]) return d * 5 // 5x penalty is strong but not "infinite"
+    }
+    return 0
   }
 
   let tour = hilbertSort(points)
@@ -171,46 +169,67 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
   
   let improved = true, iterations = 0
   const n = tour.length
+  // Tuned iterations: ~70% of the original slow values for better quality
+  const maxIterations = n > 50000 ? 35 : (n > 10000 ? 70 : 140)
   
-  // Strict 2-opt to eliminate ALL crossings and guide around white
-  while (improved && iterations < 200) {
+  while (improved && iterations < maxIterations) {
     improved = false
-    // Use a larger window or full scan for smaller point counts to ensure no crossings
-    const windowSize = n > 50000 ? 100 : (n > 10000 ? 500 : n)
+    // Restored larger search windows to effectively find and eliminate crossings
+    const windowSize = n > 50000 ? 50 : (n > 10000 ? 200 : 800)
+    let swapCount = 0
     
     for (let i = 1; i < n - 2; i++) {
+      const p1 = tour[i-1], p2 = tour[i]
+      const d12 = getDist(p1, p2)
+      const cost12 = d12 + getPenalty(p1, p2, d12)
+
       const jump = Math.min(n - 1, i + windowSize)
       for (let j = i + 1; j < jump; j++) {
-        // Standard Euclidean distance check first (fast) for crossing detection
-        const d1 = tour[i-1], d2 = tour[i], d3 = tour[j], d4 = tour[j+1]
+        const p3 = tour[j], p4 = tour[j+1]
         
-        // Euclidean 2-opt swap (removes intersections)
-        const eCurrent = Math.sqrt((d1.x-d2.x)**2 + (d1.y-d2.y)**2) + Math.sqrt((d3.x-d4.x)**2 + (d3.y-d4.y)**2)
-        const eNew = Math.sqrt((d1.x-d3.x)**2 + (d1.y-d3.y)**2) + Math.sqrt((d2.x-d4.x)**2 + (d2.y-d4.y)**2)
-        
-        if (eNew < eCurrent - 0.0001) {
-          tour = twoOptSwap(tour, i, j)
-          improved = true
-          continue
-        }
+        const d13Sq = (p1.x-p3.x)**2 + (p1.y-p3.y)**2
+        const d24Sq = (p2.x-p4.x)**2 + (p2.y-p4.y)**2
+        const d34Sq = (p3.x-p4.x)**2 + (p3.y-p4.y)**2
+        const d12Sq = d12 * d12
 
-        // Penalty-aware 2-opt (handles going around white areas)
-        const pCurrent = fastDist(d1, d2) + fastDist(d3, d4)
-        const pNew = fastDist(d1, d3) + fastDist(d2, d4)
-        
-        if (pNew < pCurrent - 0.0001) {
-          tour = twoOptSwap(tour, i, j)
-          improved = true
+        // Fast squared check first
+        if (d13Sq + d24Sq < d12Sq + d34Sq) {
+          const d34 = Math.sqrt(d34Sq)
+          const d13 = Math.sqrt(d13Sq)
+          const d24 = Math.sqrt(d24Sq)
+
+          const eCurrent = d12 + d34
+          const eNew = d13 + d24
+          
+          if (eNew < eCurrent - 0.1) {
+            tour = twoOptSwap(tour, i, j)
+            improved = true; swapCount++
+            break 
+          }
+
+          if (clipWhite && eNew < eCurrent + 1) {
+            const cost34 = d34 + getPenalty(p3, p4, d34)
+            const cost13 = d13 + getPenalty(p1, p3, d13)
+            const cost24 = d24 + getPenalty(p2, p4, d24)
+
+            if ((cost13 + cost24) < (cost12 + cost34) - 0.5) {
+              tour = twoOptSwap(tour, i, j)
+              improved = true; swapCount++
+              break
+            }
+          }
         }
       }
     }
     
     iterations++
-    if (iterations % 5 === 0) self.postMessage({ type: 'INTERMEDIATE', path: [...tour] })
-    self.postMessage({ type: 'PROGRESS', message: `Refining art (${iterations})...`, percent: 45 + Math.floor((iterations/200)*55) })
+    // Relaxed early exit: only exit if swaps are extremely rare
+    if (iterations > 10 && swapCount < n * 0.0001) break
+
+    const mod = n > 50000 ? 5 : 2
+    if (iterations % mod === 0) self.postMessage({ type: 'INTERMEDIATE', path: [...tour] })
     
-    // Break if we've reached a stable state but allow more iterations for non-crossing
-    if (iterations > 100 && !improved) break
+    self.postMessage({ type: 'PROGRESS', message: `Refining art (${iterations})...`, percent: 45 + Math.floor((iterations/maxIterations)*55) })
   }
   return tour
 }
