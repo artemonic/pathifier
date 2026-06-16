@@ -910,6 +910,32 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                   </div>
                 )}
 
+                {(settings.algorithm === 'TSP' || settings.algorithm === 'Delaunay') && (
+                  <div className="controls-group">
+                    <div className="label-row">
+                      <div className="label-with-reset">
+                        <label>Max Line Length</label>
+                        <button className="reset-btn" onClick={() => resetSetting('maxLineLength')} title="Reset">
+                          <RotateCcw />
+                        </button>
+                      </div>
+                      <input 
+                        type="number" 
+                        value={settings.maxLineLength} 
+                        onChange={(e) => updateSetting('maxLineLength', parseInt(e.target.value) || 0, true)}
+                        className="number-input wide"
+                      />
+                    </div>
+                    <SliderWithArrows 
+                      min={1} 
+                      max={1000} 
+                      step={1}
+                      value={settings.maxLineLength} 
+                      onChange={(val, isDirect) => updateSetting('maxLineLength', val, isDirect)}
+                    />
+                  </div>
+                )}
+
                 {(settings.algorithm === 'TSP' || settings.algorithm === 'Oscillations') && (
                   <div className="controls-group">
                     <div className="label-row">
@@ -935,32 +961,6 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                       step={0.01}
                       value={settings.smoothing} 
                       onChange={(val, isDirect) => updateSetting('smoothing', val, isDirect)}
-                    />
-                  </div>
-                )}
-
-                {(settings.algorithm === 'TSP' || settings.algorithm === 'Delaunay') && (
-                  <div className="controls-group">
-                    <div className="label-row">
-                      <div className="label-with-reset">
-                        <label>Max Line Length</label>
-                        <button className="reset-btn" onClick={() => resetSetting('maxLineLength')} title="Reset">
-                          <RotateCcw />
-                        </button>
-                      </div>
-                      <input 
-                        type="number" 
-                        value={settings.maxLineLength} 
-                        onChange={(e) => updateSetting('maxLineLength', parseInt(e.target.value) || 0, true)}
-                        className="number-input wide"
-                      />
-                    </div>
-                    <SliderWithArrows 
-                      min={1} 
-                      max={1000} 
-                      step={1}
-                      value={settings.maxLineLength} 
-                      onChange={(val, isDirect) => updateSetting('maxLineLength', val, isDirect)}
                     />
                   </div>
                 )}

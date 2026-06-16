@@ -151,7 +151,7 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
   }
 
   // Balanced penalty: Avoid highlights but don't create knots to do it
-  const getWhitePenalty = (p1: Point, p2: Point, d: number): number => {
+  const getPenalty = (p1: Point, p2: Point, d: number): number => {
     if (!clipWhite || d < 12) return 0
     
     // Sample only midpoint for speed. If midpoint is in white, it's likely crossing.
@@ -177,43 +177,23 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
     // Narrow base window for speed, but dynamic expansion
     const baseWindowSize = n > 50000 ? 30 : (n > 10000 ? 100 : 400)
     let swapCount = 0
-
-    // Calculate average line length for the current tour
-    let totalLength = 0
-    for (let k = 0; k < n - 1; k++) {
-      totalLength += getDist(tour[k], tour[k+1])
-    }
-    const avgLength = totalLength / Math.max(1, n - 1)
-    const softThreshold = avgLength * 1.2
     
-    // Hard cutoff: Never connect cities that are absurdly far apart
-    const hardCutoff = avgLength * 3.0
-
-    const getLengthPenalty = (d: number) => d > softThreshold ? d * 50 : 0
-
     for (let i = 1; i < n - 2; i++) {
       const p1 = tour[i-1], p2 = tour[i]
       const d12 = getDist(p1, p2)
-      const penalty12 = getWhitePenalty(p1, p2, d12) + getLengthPenalty(d12)
-      const cost12 = d12 + penalty12
+      const cost12 = d12 + getPenalty(p1, p2, d12)
 
       // Guarantee removal of long/crossing lines: search ENTIRE path ('n')
-      const searchWindow = (cost12 > d12 + 1 || d12 > softThreshold) ? n : baseWindowSize
+      const searchWindow = (cost12 > d12 + 1 || d12 > 15) ? n : baseWindowSize
       const jump = Math.min(n - 1, i + searchWindow)
 
       for (let j = i + 1; j < jump; j++) {
         const p3 = tour[j], p4 = tour[j+1]
         
+        // Exact Euclidean check is required to guarantee no crossings
+        const d34 = getDist(p3, p4)
         const d13 = getDist(p1, p3)
         const d24 = getDist(p2, p4)
-        
-        // STRICT RULE: Never connect cities that are too far apart.
-        // If the proposed new edges are longer than the hard cutoff, instantly reject the swap.
-        if (d13 > hardCutoff || d24 > hardCutoff) {
-          continue
-        }
-
-        const d34 = getDist(p3, p4)
 
         const eCurrent = d12 + d34
         const eNew = d13 + d24
@@ -225,15 +205,11 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
           break 
         }
 
-        // Penalty improvement (avoids white areas and strict length limit)
-        if (clipWhite || cost12 > d12 + 1 || d12 > softThreshold) {
-          const penalty34 = getWhitePenalty(p3, p4, d34) + getLengthPenalty(d34)
-          const penalty13 = getWhitePenalty(p1, p3, d13) + getLengthPenalty(d13)
-          const penalty24 = getWhitePenalty(p2, p4, d24) + getLengthPenalty(d24)
-          
-          const cost34 = d34 + penalty34
-          const cost13 = d13 + penalty13
-          const cost24 = d24 + penalty24
+        // Penalty improvement (avoids white areas)
+        if (clipWhite && eNew < eCurrent + 2) {
+          const cost34 = d34 + getPenalty(p3, p4, d34)
+          const cost13 = d13 + getPenalty(p1, p3, d13)
+          const cost24 = d24 + getPenalty(p2, p4, d24)
 
           if ((cost13 + cost24) < (cost12 + cost34) - 0.1) {
             tour = twoOptSwap(tour, i, j)
@@ -243,7 +219,6 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
         }
       }
     }
-
     
     iterations++
     // Only exit early if basically zero swaps occurred
