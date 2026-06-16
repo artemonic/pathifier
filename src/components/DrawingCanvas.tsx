@@ -172,6 +172,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       settings.contrast,
       settings.invert,
       settings.vignetteAmount,
+      settings.vignetteMode,
       settings.vignetteWidth,
       settings.vignetteBlur
     )
@@ -182,7 +183,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     tmpCanvas.getContext('2d')?.putImageData(processedData, 0, 0)
     
     ctx.drawImage(tmpCanvas, 0, 0, canvasSize.width, canvasSize.height)
-  }, [originalImage, settings.blacks, settings.whites, settings.midtones, settings.contrast, settings.invert, settings.vignetteAmount, settings.vignetteWidth, settings.vignetteBlur, canvasSize])
+  }, [originalImage, settings.blacks, settings.whites, settings.midtones, settings.contrast, settings.invert, settings.vignetteAmount, settings.vignetteMode, settings.vignetteWidth, settings.vignetteBlur, canvasSize])
 
   // Initialize and run worker with interruption support
   useEffect(() => {
@@ -239,6 +240,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         settings.contrast,
         settings.invert,
         settings.vignetteAmount,
+        settings.vignetteMode,
         settings.vignetteWidth,
         settings.vignetteBlur
       )
@@ -289,6 +291,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     settings.contrast,
     settings.invert,
     settings.vignetteAmount,
+    settings.vignetteMode,
     settings.vignetteWidth,
     settings.vignetteBlur,
     settings.spacingMin,

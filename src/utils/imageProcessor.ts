@@ -38,7 +38,7 @@ export class ImageProcessor {
     return histogram
   }
 
-  processImage(img: HTMLImageElement, blacks: number, whites: number, midtones: number, contrast: number, invert: boolean, vignetteAmount: number, vignetteWidth: number, vignetteBlur: number): ImageData {
+  processImage(img: HTMLImageElement, blacks: number, whites: number, midtones: number, contrast: number, invert: boolean, vignetteAmount: number, vignetteMode: 'none' | 'black' | 'white', vignetteWidth: number, vignetteBlur: number): ImageData {
     this.canvas.width = img.width
     this.canvas.height = img.height
     this.ctx.drawImage(img, 0, 0)
@@ -80,7 +80,7 @@ export class ImageProcessor {
       gray = (gray - 0.5) * cFactor + 0.5
       
       // Apply Vignette
-      if (vignetteAmount !== 0) {
+      if (vignetteMode !== 'none' && vignetteAmount !== 0) {
         // Normalize distance based on aspect ratio (normalized coordinates -1 to 1)
         const nx = (x - centerX) / centerX
         const ny = (y - centerY) / centerY
@@ -96,9 +96,9 @@ export class ImageProcessor {
         const outer = inner + (vignetteBlur * 0.8) + 0.01
         
         const v = Math.max(0, Math.min(1, (dist - inner) / (outer - inner)))
-        const vignetteEffect = v * Math.abs(vignetteAmount)
+        const vignetteEffect = v * (vignetteAmount / 100)
         
-        if (vignetteAmount < 0) {
+        if (vignetteMode === 'black') {
           // Black vignette (multiply)
           gray *= (1 - vignetteEffect)
         } else {

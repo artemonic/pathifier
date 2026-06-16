@@ -36,6 +36,7 @@ const ImagePreview: React.FC<ImagePreviewProps> = ({
       settings.contrast,
       settings.invert,
       settings.vignetteAmount,
+      settings.vignetteMode,
       settings.vignetteWidth,
       settings.vignetteBlur
     )

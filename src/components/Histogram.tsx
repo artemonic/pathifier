@@ -103,9 +103,9 @@ const Histogram: React.FC<HistogramProps> = React.memo(({ data, blacks, whites, 
     const val = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
 
     if (activeHandle === 'blacks') {
-      onLevelsChange({ blacks: Math.min(val, midtones - 0.01) })
+      onLevelsChange({ blacks: Math.min(val, whites - 0.02) })
     } else if (activeHandle === 'whites') {
-      onLevelsChange({ whites: Math.max(val, midtones + 0.01) })
+      onLevelsChange({ whites: Math.max(val, blacks + 0.02) })
     } else if (activeHandle === 'midtones') {
       onLevelsChange({ midtones: Math.max(blacks + 0.01, Math.min(whites - 0.01, val)) })
     }

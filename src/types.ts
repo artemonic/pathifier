@@ -21,6 +21,7 @@ export interface Settings {
   contrast: number;
   invert: boolean;
   vignetteAmount: number;
+  vignetteMode: 'none' | 'black' | 'white';
   vignetteWidth: number;
   vignetteBlur: number;
   lineWidth: number;

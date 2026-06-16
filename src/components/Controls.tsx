@@ -25,6 +25,7 @@ const DEFAULTS: Partial<Settings> = {
   contrast: 0,
   invert: false,
   vignetteAmount: 0,
+  vignetteMode: 'none',
   vignetteWidth: 0.5,
   vignetteBlur: 0.5,
   lineWidth: 2.0,
@@ -200,10 +201,11 @@ const Controls: React.FC<ControlsProps> = React.memo(({
     const defaultValue = DEFAULTS[key as keyof typeof DEFAULTS]
     
     if (!isDirectInput && typeof value === 'number' && typeof defaultValue === 'number') {
-      const isSmallRange = ['smoothing', 'blacks', 'whites', 'midtones', 'lineWidth', 'vignetteAmount', 'vignetteWidth', 'vignetteBlur', 'oscAmplitude', 'spacingMin'].includes(key)
+      const isSmallRange = ['smoothing', 'blacks', 'whites', 'midtones', 'lineWidth', 'vignetteWidth', 'vignetteBlur', 'oscAmplitude', 'spacingMin'].includes(key)
       const threshold = 
         key === 'pointCount' ? 2000 : 
         key === 'contrast' ? 5 : 
+        key === 'vignetteAmount' ? 5 :
         key === 'maxLineLength' ? 50 : 
         key === 'pointsPerLine' ? 5 : 
         key === 'oscFrequencyLevels' ? 0 :
@@ -217,7 +219,27 @@ const Controls: React.FC<ControlsProps> = React.memo(({
       }
     }
 
-    setSettings(prev => ({ ...prev, [key]: finalValue }))
+    setSettings(prev => {
+      const next = { ...prev, [key]: finalValue }
+      
+      // Proportional midtone adjustment
+      if (key === 'blacks' || key === 'whites') {
+        const oldRange = prev.whites - prev.blacks
+        const relativeMid = oldRange > 1e-6 ? (prev.midtones - prev.blacks) / oldRange : 0.5
+        
+        if (key === 'blacks') {
+          const newBlacks = finalValue as number
+          const newRange = prev.whites - newBlacks
+          next.midtones = parseFloat((newBlacks + relativeMid * newRange).toFixed(2))
+        } else {
+          const newWhites = finalValue as number
+          const newRange = newWhites - prev.blacks
+          next.midtones = parseFloat((prev.blacks + relativeMid * newRange).toFixed(2))
+        }
+      }
+      
+      return next
+    })
   }, [setSettings])
 
   const resetSetting = React.useCallback((key: keyof Settings) => {
@@ -235,9 +257,9 @@ const Controls: React.FC<ControlsProps> = React.memo(({
     }
 
     if (defaultValue !== undefined) {
-      setSettings(prev => ({ ...prev, [key]: defaultValue }))
+      updateSetting(key, defaultValue as any, true)
     }
-  }, [setSettings, settings.algorithm, settings.dotStyle])
+  }, [updateSetting, settings.algorithm, settings.dotStyle])
 
   const resetColorGrading = React.useCallback(() => {
     setSettings(prev => ({
@@ -254,19 +276,17 @@ const Controls: React.FC<ControlsProps> = React.memo(({
     setSettings(prev => ({
       ...prev,
       vignetteAmount: DEFAULTS.vignetteAmount!,
+      vignetteMode: DEFAULTS.vignetteMode!,
       vignetteWidth: DEFAULTS.vignetteWidth!,
       vignetteBlur: DEFAULTS.vignetteBlur!,
     }))
   }, [setSettings])
 
   const handleLevelsChange = React.useCallback((levels: { blacks?: number, whites?: number, midtones?: number }) => {
-    setSettings(prev => ({
-      ...prev,
-      ...(levels.blacks !== undefined && { blacks: parseFloat(levels.blacks.toFixed(2)) }),
-      ...(levels.whites !== undefined && { whites: parseFloat(levels.whites.toFixed(2)) }),
-      ...(levels.midtones !== undefined && { midtones: parseFloat(levels.midtones.toFixed(2)) }),
-    }))
-  }, [setSettings])
+    if (levels.blacks !== undefined) updateSetting('blacks', levels.blacks, true)
+    if (levels.whites !== undefined) updateSetting('whites', levels.whites, true)
+    if (levels.midtones !== undefined) updateSetting('midtones', levels.midtones, true)
+  }, [updateSetting])
 
   const handleAlgorithmChange = (newAlgorithm: Algorithm) => {
     setSettings(prev => {
@@ -369,7 +389,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
               </div>
               <SliderWithArrows 
                 min={0.0} 
-                max={Math.min(0.99, settings.midtones - 0.01)} 
+                max={Math.min(0.98, settings.whites - 0.02)} 
                 step={0.01}
                 value={settings.blacks} 
                 onChange={(val, isDirect) => updateSetting('blacks', val, isDirect)}
@@ -418,7 +438,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                 />
               </div>
               <SliderWithArrows 
-                min={Math.max(0.01, settings.midtones + 0.01)} 
+                min={Math.max(0.02, settings.blacks + 0.02)} 
                 max={1.0} 
                 step={0.01}
                 value={settings.whites} 
@@ -459,29 +479,55 @@ const Controls: React.FC<ControlsProps> = React.memo(({
               </button>
             </div>
             <div className="controls-group">
-              <div className="label-row">
-                <div className="label-with-reset">
-                  <label>Amount (B/W)</label>
-                  <button className="reset-btn" onClick={() => resetSetting('vignetteAmount')} title="Reset">
-                    <RotateCcw />
-                  </button>
+              <label>Vignette Color</label>
+              <div className="segmented-toggle">
+                <button 
+                  className={`segmented-btn ${settings.vignetteMode === 'black' ? 'active' : ''}`}
+                  onClick={() => updateSetting('vignetteMode', 'black')}
+                >
+                  Black
+                </button>
+                <button 
+                  className={`segmented-btn ${settings.vignetteMode === 'none' ? 'active' : ''}`}
+                  onClick={() => updateSetting('vignetteMode', 'none')}
+                >
+                  None
+                </button>
+                <button 
+                  className={`segmented-btn ${settings.vignetteMode === 'white' ? 'active' : ''}`}
+                  onClick={() => updateSetting('vignetteMode', 'white')}
+                >
+                  White
+                </button>
+              </div>
+            </div>
+
+            {settings.vignetteMode !== 'none' && (
+              <div className="controls-group">
+                <div className="label-row">
+                  <div className="label-with-reset">
+                    <label>Intensity</label>
+                    <button className="reset-btn" onClick={() => updateSetting('vignetteAmount', 100)} title="Full Intensity">
+                      <RotateCcw />
+                    </button>
+                  </div>
+                  <input 
+                    type="number" 
+                    step="1"
+                    value={settings.vignetteAmount} 
+                    onChange={(e) => updateSetting('vignetteAmount', parseFloat(e.target.value) || 0, true)}
+                    className="number-input"
+                  />
                 </div>
-                <input 
-                  type="number" 
-                  step="0.01"
+                <SliderWithArrows 
+                  min={0} 
+                  max={100} 
+                  step={1}
                   value={settings.vignetteAmount} 
-                  onChange={(e) => updateSetting('vignetteAmount', parseFloat(e.target.value) || 0, true)}
-                  className="number-input"
+                  onChange={(val, isDirect) => updateSetting('vignetteAmount', val, isDirect)}
                 />
               </div>
-              <SliderWithArrows 
-                min={-1.0} 
-                max={1.0} 
-                step={0.01}
-                value={settings.vignetteAmount} 
-                onChange={(val, isDirect) => updateSetting('vignetteAmount', val, isDirect)}
-              />
-            </div>
+            )}
 
             <div className="controls-group">
               <div className="label-row">

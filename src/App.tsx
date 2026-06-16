@@ -21,9 +21,10 @@ function App() {
     contrast: 0,
     invert: false,
     vignetteAmount: 0,
+    vignetteMode: 'none',
     vignetteWidth: 0.5,
     vignetteBlur: 0.5,
-    lineWidth: 3.0,
+    lineWidth: 2.0,
     smoothing: 0,
     maxLineLength: 1000,
     algorithm: 'TSP',
@@ -167,6 +168,13 @@ function App() {
           onCancel={handleCropCancel} 
         />
       )}
+
+      <footer>
+        <a href="https://artemonic.github.io/pathifier/">Pathifier</a> © 2026 by <a href="https://www.printables.com/@artemonic">artemonic</a> is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>
+        <img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="" style={{ maxWidth: '1em', maxHeight: '1em', marginLeft: '.2em' }} />
+        <img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="" style={{ maxWidth: '1em', maxHeight: '1em', marginLeft: '.2em' }} />
+        <img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg" alt="" style={{ maxWidth: '1em', maxHeight: '1em', marginLeft: '.2em' }} />
+      </footer>
     </div>
   )
 }
