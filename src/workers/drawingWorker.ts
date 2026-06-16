@@ -159,7 +159,7 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
     const my = Math.floor((p1.y + p2.y) * 0.5)
     
     if (mx >= 0 && mx < width && my >= 0 && my < height) {
-      if (isWhite[my * width + mx]) return d * 5 // 5x penalty is strong but not "infinite"
+      if (isWhite[my * width + mx]) return d * 10 // Strong 10x penalty to ensure long crossings break
     }
     return 0
   }
@@ -169,13 +169,13 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
   
   let improved = true, iterations = 0
   const n = tour.length
-  // Increased iterations to allow thorough untangling
-  const maxIterations = n > 50000 ? 50 : (n > 10000 ? 100 : 200)
+  // Reduced iterations for speed (-30% more)
+  const maxIterations = n > 50000 ? 25 : (n > 10000 ? 50 : 100)
   
   while (improved && iterations < maxIterations) {
     improved = false
-    // Large search windows to effectively find and eliminate crossings
-    const windowSize = n > 50000 ? 50 : (n > 10000 ? 200 : 800)
+    // Narrow base window for speed, but dynamic expansion
+    const baseWindowSize = n > 50000 ? 30 : (n > 10000 ? 100 : 400)
     let swapCount = 0
     
     for (let i = 1; i < n - 2; i++) {
@@ -183,7 +183,10 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
       const d12 = getDist(p1, p2)
       const cost12 = d12 + getPenalty(p1, p2, d12)
 
-      const jump = Math.min(n - 1, i + windowSize)
+      // Guarantee removal of long/crossing lines: search ENTIRE path ('n')
+      const searchWindow = (cost12 > d12 + 1 || d12 > 15) ? n : baseWindowSize
+      const jump = Math.min(n - 1, i + searchWindow)
+
       for (let j = i + 1; j < jump; j++) {
         const p3 = tour[j], p4 = tour[j+1]
         
