@@ -184,9 +184,12 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
       totalLength += getDist(tour[k], tour[k+1])
     }
     const avgLength = totalLength / Math.max(1, n - 1)
-    const maxLengthThreshold = avgLength * 1.2
+    const softThreshold = avgLength * 1.2
+    
+    // Hard cutoff: Never connect cities that are absurdly far apart
+    const hardCutoff = avgLength * 3.0
 
-    const getLengthPenalty = (d: number) => d > maxLengthThreshold ? d * 50 : 0
+    const getLengthPenalty = (d: number) => d > softThreshold ? d * 50 : 0
 
     for (let i = 1; i < n - 2; i++) {
       const p1 = tour[i-1], p2 = tour[i]
@@ -195,16 +198,22 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
       const cost12 = d12 + penalty12
 
       // Guarantee removal of long/crossing lines: search ENTIRE path ('n')
-      const searchWindow = (cost12 > d12 + 1 || d12 > maxLengthThreshold) ? n : baseWindowSize
+      const searchWindow = (cost12 > d12 + 1 || d12 > softThreshold) ? n : baseWindowSize
       const jump = Math.min(n - 1, i + searchWindow)
 
       for (let j = i + 1; j < jump; j++) {
         const p3 = tour[j], p4 = tour[j+1]
         
-        // Exact Euclidean check is required to guarantee no crossings
-        const d34 = getDist(p3, p4)
         const d13 = getDist(p1, p3)
         const d24 = getDist(p2, p4)
+        
+        // STRICT RULE: Never connect cities that are too far apart.
+        // If the proposed new edges are longer than the hard cutoff, instantly reject the swap.
+        if (d13 > hardCutoff || d24 > hardCutoff) {
+          continue
+        }
+
+        const d34 = getDist(p3, p4)
 
         const eCurrent = d12 + d34
         const eNew = d13 + d24
@@ -217,19 +226,20 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
         }
 
         // Penalty improvement (avoids white areas and strict length limit)
-        const penalty34 = getWhitePenalty(p3, p4, d34) + getLengthPenalty(d34)
-        const penalty13 = getWhitePenalty(p1, p3, d13) + getLengthPenalty(d13)
-        const penalty24 = getWhitePenalty(p2, p4, d24) + getLengthPenalty(d24)
-        
-        // Always apply penalties to force lines through denser/darker areas
-        const cost34 = d34 + penalty34
-        const cost13 = d13 + penalty13
-        const cost24 = d24 + penalty24
+        if (clipWhite || cost12 > d12 + 1 || d12 > softThreshold) {
+          const penalty34 = getWhitePenalty(p3, p4, d34) + getLengthPenalty(d34)
+          const penalty13 = getWhitePenalty(p1, p3, d13) + getLengthPenalty(d13)
+          const penalty24 = getWhitePenalty(p2, p4, d24) + getLengthPenalty(d24)
+          
+          const cost34 = d34 + penalty34
+          const cost13 = d13 + penalty13
+          const cost24 = d24 + penalty24
 
-        if ((cost13 + cost24) < (cost12 + cost34) - 0.1) {
-          tour = twoOptSwap(tour, i, j)
-          improved = true; swapCount++
-          break
+          if ((cost13 + cost24) < (cost12 + cost34) - 0.1) {
+            tour = twoOptSwap(tour, i, j)
+            improved = true; swapCount++
+            break
+          }
         }
       }
     }
