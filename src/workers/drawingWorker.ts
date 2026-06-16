@@ -169,12 +169,12 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
   
   let improved = true, iterations = 0
   const n = tour.length
-  // Tuned iterations: ~70% of the original slow values for better quality
-  const maxIterations = n > 50000 ? 35 : (n > 10000 ? 70 : 140)
+  // Increased iterations to allow thorough untangling
+  const maxIterations = n > 50000 ? 50 : (n > 10000 ? 100 : 200)
   
   while (improved && iterations < maxIterations) {
     improved = false
-    // Restored larger search windows to effectively find and eliminate crossings
+    // Large search windows to effectively find and eliminate crossings
     const windowSize = n > 50000 ? 50 : (n > 10000 ? 200 : 800)
     let swapCount = 0
     
@@ -187,44 +187,39 @@ function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
       for (let j = i + 1; j < jump; j++) {
         const p3 = tour[j], p4 = tour[j+1]
         
-        const d13Sq = (p1.x-p3.x)**2 + (p1.y-p3.y)**2
-        const d24Sq = (p2.x-p4.x)**2 + (p2.y-p4.y)**2
-        const d34Sq = (p3.x-p4.x)**2 + (p3.y-p4.y)**2
-        const d12Sq = d12 * d12
+        // Exact Euclidean check is required to guarantee no crossings
+        const d34 = getDist(p3, p4)
+        const d13 = getDist(p1, p3)
+        const d24 = getDist(p2, p4)
 
-        // Fast squared check first
-        if (d13Sq + d24Sq < d12Sq + d34Sq) {
-          const d34 = Math.sqrt(d34Sq)
-          const d13 = Math.sqrt(d13Sq)
-          const d24 = Math.sqrt(d24Sq)
+        const eCurrent = d12 + d34
+        const eNew = d13 + d24
+        
+        // Euclidean improvement (removes crossing)
+        if (eNew < eCurrent - 0.001) {
+          tour = twoOptSwap(tour, i, j)
+          improved = true; swapCount++
+          break 
+        }
 
-          const eCurrent = d12 + d34
-          const eNew = d13 + d24
-          
-          if (eNew < eCurrent - 0.1) {
+        // Penalty improvement (avoids white areas)
+        if (clipWhite && eNew < eCurrent + 2) {
+          const cost34 = d34 + getPenalty(p3, p4, d34)
+          const cost13 = d13 + getPenalty(p1, p3, d13)
+          const cost24 = d24 + getPenalty(p2, p4, d24)
+
+          if ((cost13 + cost24) < (cost12 + cost34) - 0.1) {
             tour = twoOptSwap(tour, i, j)
             improved = true; swapCount++
-            break 
-          }
-
-          if (clipWhite && eNew < eCurrent + 1) {
-            const cost34 = d34 + getPenalty(p3, p4, d34)
-            const cost13 = d13 + getPenalty(p1, p3, d13)
-            const cost24 = d24 + getPenalty(p2, p4, d24)
-
-            if ((cost13 + cost24) < (cost12 + cost34) - 0.5) {
-              tour = twoOptSwap(tour, i, j)
-              improved = true; swapCount++
-              break
-            }
+            break
           }
         }
       }
     }
     
     iterations++
-    // Relaxed early exit: only exit if swaps are extremely rare
-    if (iterations > 10 && swapCount < n * 0.0001) break
+    // Only exit early if basically zero swaps occurred
+    if (iterations > 15 && swapCount === 0) break
 
     const mod = n > 50000 ? 5 : 2
     if (iterations % mod === 0) self.postMessage({ type: 'INTERMEDIATE', path: [...tour] })
