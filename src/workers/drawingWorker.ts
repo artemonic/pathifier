@@ -6,6 +6,7 @@ interface WorkerMessage {
   imageData: ImageData
   pointCount: number
   algorithm: string
+  clipWhite?: boolean
   pointsPerLine?: number
   dither?: DitherType
   oscAmplitude?: number
@@ -23,17 +24,20 @@ function twoOptSwap(points: Point[], i: number, j: number): Point[] {
   return [...newPoints, ...segment, ...points.slice(j + 1)]
 }
 
-function weightedVoronoiStippling(imageData: ImageData, targetPointCount: number, iterations: number = 40, spacingMin: number = 2, spacingMax: number = 20): Point[] {
+function weightedVoronoiStippling(imageData: ImageData, targetPointCount: number, iterations: number = 40, spacingMin: number = 2, spacingMax: number = 20, clipWhite: boolean = false): Point[] {
   const { data, width, height } = imageData
   const points: Point[] = []
   
   // Weight mapping based on user-defined spacing
-  // Spacing (d) is proportional to 1/sqrt(weight)
-  // weight = 1 / (d^2)
   const weightMin = 1 / (spacingMax ** 2)
   const weightMax = 1 / (spacingMin ** 2)
   const getWeight = (i: number) => {
-    const darkness = Math.pow((255 - data[i]) / 255, 1.5)
+    const r = data[i], g = data[i+1], b = data[i+2]
+    const luminosity = (r * 0.299 + g * 0.587 + b * 0.114)
+    if (clipWhite && luminosity > 250) return 0
+    
+    // Stronger gamma (2.0) for even sparser highlights as requested
+    const darkness = Math.pow((255 - luminosity) / 255, 2.0)
     return weightMin + darkness * (weightMax - weightMin)
   }
 
@@ -127,29 +131,86 @@ function hilbertSort(points: Point[]): Point[] {
   })
 }
 
-function dist(p1: Point, p2: Point): number {
-  return Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
-}
-
-function solveTSP(points: Point[]) {
+function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
   if (points.length < 4) return points
   self.postMessage({ type: 'PROGRESS', message: 'Planning path...', percent: 35 })
+  
+  const { width, height } = imageData
+  const isWhite = new Uint8Array(width * height)
+  if (clipWhite) {
+    const data = imageData.data
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 240) isWhite[i / 4] = 1
+    }
+  }
+
+  const fastDist = (p1: Point, p2: Point): number => {
+    const dx = p1.x - p2.x, dy = p1.y - p2.y
+    const d2 = dx * dx + dy * dy
+    const d = Math.sqrt(d2)
+    
+    if (!clipWhite || d < 10) return d
+    
+    const checkPoint = (t: number) => {
+      const sx = Math.floor(p1.x + (p2.x - p1.x) * t)
+      const sy = Math.floor(p1.y + (p2.y - p1.y) * t)
+      if (sx < 0 || sx >= width || sy < 0 || sy >= height) return false
+      return isWhite[sy * width + sx] === 1
+    }
+
+    // Increased penalty to ensure it really prefers going around
+    if (checkPoint(0.5) || (d > 30 && (checkPoint(0.25) || checkPoint(0.75)))) {
+      return d + d * 50 
+    }
+    
+    return d
+  }
+
   let tour = hilbertSort(points)
   self.postMessage({ type: 'PROGRESS', message: 'Optimizing flow...', percent: 45 })
+  
   let improved = true, iterations = 0
-  while (improved && iterations < 100) {
-    improved = false; const n = tour.length; const windowSize = n > 50000 ? 100 : (n > 10000 ? 500 : n)
+  const n = tour.length
+  
+  // Strict 2-opt to eliminate ALL crossings and guide around white
+  while (improved && iterations < 200) {
+    improved = false
+    // Use a larger window or full scan for smaller point counts to ensure no crossings
+    const windowSize = n > 50000 ? 100 : (n > 10000 ? 500 : n)
+    
     for (let i = 1; i < n - 2; i++) {
-      const jump = (i % 80 === 0) ? Math.min(n - 1, i + windowSize * 8) : Math.min(n - 1, i + windowSize)
+      const jump = Math.min(n - 1, i + windowSize)
       for (let j = i + 1; j < jump; j++) {
-        const dCurrent = dist(tour[i-1], tour[i]) + dist(tour[j], tour[j+1])
-        const dNew = dist(tour[i-1], tour[j]) + dist(tour[i], tour[j+1])
-        if (dNew < dCurrent - 0.001) { tour = twoOptSwap(tour, i, j); improved = true }
+        // Standard Euclidean distance check first (fast) for crossing detection
+        const d1 = tour[i-1], d2 = tour[i], d3 = tour[j], d4 = tour[j+1]
+        
+        // Euclidean 2-opt swap (removes intersections)
+        const eCurrent = Math.sqrt((d1.x-d2.x)**2 + (d1.y-d2.y)**2) + Math.sqrt((d3.x-d4.x)**2 + (d3.y-d4.y)**2)
+        const eNew = Math.sqrt((d1.x-d3.x)**2 + (d1.y-d3.y)**2) + Math.sqrt((d2.x-d4.x)**2 + (d2.y-d4.y)**2)
+        
+        if (eNew < eCurrent - 0.0001) {
+          tour = twoOptSwap(tour, i, j)
+          improved = true
+          continue
+        }
+
+        // Penalty-aware 2-opt (handles going around white areas)
+        const pCurrent = fastDist(d1, d2) + fastDist(d3, d4)
+        const pNew = fastDist(d1, d3) + fastDist(d2, d4)
+        
+        if (pNew < pCurrent - 0.0001) {
+          tour = twoOptSwap(tour, i, j)
+          improved = true
+        }
       }
     }
-    iterations++; self.postMessage({ type: 'INTERMEDIATE', path: [...tour] })
-    self.postMessage({ type: 'PROGRESS', message: `Refining art (${iterations})...`, percent: 45 + Math.floor((iterations/100)*55) })
-    if (iterations > 30 && !improved) break
+    
+    iterations++
+    if (iterations % 5 === 0) self.postMessage({ type: 'INTERMEDIATE', path: [...tour] })
+    self.postMessage({ type: 'PROGRESS', message: `Refining art (${iterations})...`, percent: 45 + Math.floor((iterations/200)*55) })
+    
+    // Break if we've reached a stable state but allow more iterations for non-crossing
+    if (iterations > 100 && !improved) break
   }
   return tour
 }
@@ -312,7 +373,7 @@ function generateOscillations(imageData: ImageData, scanLines: number, amplitude
 }
 
 self.onmessage = (e: MessageEvent<WorkerMessage>) => {
-  const { type, imageData, pointCount, algorithm, pointsPerLine, dither, oscAmplitude, oscFrequencyLevels, oscMaxFrequency, oscScanLines, oscMode, spacingMin, spacingMax } = e.data
+  const { type, imageData, pointCount, algorithm, clipWhite, pointsPerLine, dither, oscAmplitude, oscFrequencyLevels, oscMaxFrequency, oscScanLines, oscMode, spacingMin, spacingMax } = e.data
   if (type === 'START') {
     if (algorithm === 'Dot matrix') {
       self.postMessage({ type: 'RESULT', path: dotMatrix(imageData, pointsPerLine || 100, dither || 'Floyd-Steinberg') })
@@ -330,11 +391,11 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       const iters = isDelaunay 
         ? (pointCount > 50000 ? 5 : 10) 
         : (pointCount > 50000 ? 15 : (pointCount > 10000 ? 30 : 45))
-      const pts = weightedVoronoiStippling(imageData, pointCount, iters, spacingMin, spacingMax)
+      const pts = weightedVoronoiStippling(imageData, pointCount, iters, spacingMin, spacingMax, !!clipWhite)
       if (algorithm === 'Delaunay') {
         self.postMessage({ type: 'RESULT', path: solveDelaunay(pts) })
       } else {
-        self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts) : pts })
+        self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts, imageData) : pts })
       }
     }
   }

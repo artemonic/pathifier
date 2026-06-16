@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
 import type { Settings, Algorithm, DitherType } from '../types'
-import ImagePreview from './ImagePreview'
 import Histogram from './Histogram'
 import { ImageProcessor } from '../utils/imageProcessor'
 
@@ -12,7 +11,7 @@ interface ControlsProps {
   autoProcess: boolean
   setAutoProcess: (auto: boolean) => void
   onRunProcessing: () => void
-  onImageUpload: (imageUrl: string) => void
+  onImageUpload: (imageUrl: string, fileName: string) => void
   onExportSVG: () => void
   isProcessing: boolean
   hasPath: boolean
@@ -24,7 +23,7 @@ const DEFAULTS: Partial<Settings> = {
   midtones: 0.5,
   contrast: 0,
   invert: false,
-  vignetteAmount: 0,
+  vignetteAmount: 100,
   vignetteMode: 'none',
   vignetteWidth: 0.5,
   vignetteBlur: 0.5,
@@ -192,7 +191,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
     const file = e.target.files?.[0]
     if (file) {
       const url = URL.createObjectURL(file)
-      onImageUpload(url)
+      onImageUpload(url, file.name)
     }
   }, [onImageUpload])
 
@@ -326,16 +325,6 @@ const Controls: React.FC<ControlsProps> = React.memo(({
               disabled={isProcessing}
             />
           </div>
-
-          {image && (
-            <div className="controls-group">
-              <label>Image Preview</label>
-              <ImagePreview 
-                image={image} 
-                settings={settings} 
-              />
-            </div>
-          )}
 
           <div className="controls-section">
             <div className="section-header">
@@ -502,33 +491,6 @@ const Controls: React.FC<ControlsProps> = React.memo(({
               </div>
             </div>
 
-            {settings.vignetteMode !== 'none' && (
-              <div className="controls-group">
-                <div className="label-row">
-                  <div className="label-with-reset">
-                    <label>Intensity</label>
-                    <button className="reset-btn" onClick={() => updateSetting('vignetteAmount', 100)} title="Full Intensity">
-                      <RotateCcw />
-                    </button>
-                  </div>
-                  <input 
-                    type="number" 
-                    step="1"
-                    value={settings.vignetteAmount} 
-                    onChange={(e) => updateSetting('vignetteAmount', parseFloat(e.target.value) || 0, true)}
-                    className="number-input"
-                  />
-                </div>
-                <SliderWithArrows 
-                  min={0} 
-                  max={100} 
-                  step={1}
-                  value={settings.vignetteAmount} 
-                  onChange={(val, isDirect) => updateSetting('vignetteAmount', val, isDirect)}
-                />
-              </div>
-            )}
-
             <div className="controls-group">
               <div className="label-row">
                 <div className="label-with-reset">
@@ -631,6 +593,18 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                     value={settings.pointCount} 
                     onChange={(val, isDirect) => updateSetting('pointCount', val, isDirect)}
                   />
+                </div>
+
+                <div className="controls-group">
+                  <div className="checkbox-row">
+                    <input 
+                      id="clip-white"
+                      type="checkbox" 
+                      checked={settings.clipWhite} 
+                      onChange={(e) => updateSetting('clipWhite', e.target.checked)} 
+                    />
+                    <label htmlFor="clip-white">Clip White Areas</label>
+                  </div>
                 </div>
 
                 {settings.algorithm === 'Delaunay' && (

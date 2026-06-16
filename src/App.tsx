@@ -3,6 +3,7 @@ import './App.css'
 import DrawingCanvas from './components/DrawingCanvas'
 import Controls from './components/Controls'
 import CropModal from './components/CropModal'
+import ImagePreview from './components/ImagePreview'
 import { generateSVG } from './utils/smoothing'
 import type { Settings, Point } from './types'
 
@@ -14,13 +15,14 @@ export interface Progress {
 function App() {
   const [image, setImage] = useState<string | null>(null)
   const [tempImage, setTempImage] = useState<string | null>(null)
+  const [originalFileName, setOriginalFileName] = useState<string>('pathifier')
   const [settings, setSettings] = useState<Settings>({
     blacks: 0.0,
     whites: 1.0,
     midtones: 0.5,
     contrast: 0,
     invert: false,
-    vignetteAmount: 0,
+    vignetteAmount: 1.0,
     vignetteMode: 'none',
     vignetteWidth: 0.5,
     vignetteBlur: 0.5,
@@ -29,6 +31,7 @@ function App() {
     maxLineLength: 1000,
     algorithm: 'TSP',
     pointCount: 10000,
+    clipWhite: false,
     pointsPerLine: 256,
     dither: 'Atkinson',
     dotStyle: 'dots',
@@ -50,8 +53,11 @@ function App() {
   const [stopTrigger, setStopTrigger] = useState(0)
   const [zoom, setZoom] = useState(1)
 
-  const handleImageUpload = (imageUrl: string) => {
+  const handleImageUpload = (imageUrl: string, fileName: string) => {
     setTempImage(imageUrl)
+    // Strip extension from filename
+    const baseName = fileName.replace(/\.[^/.]+$/, "")
+    setOriginalFileName(baseName)
   }
 
   const handleCropComplete = (croppedImageUrl: string) => {
@@ -84,7 +90,7 @@ function App() {
     
     const link = document.createElement('a')
     link.href = url
-    link.download = 'pathifier.svg'
+    link.download = `${originalFileName}_pathified.svg`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -93,10 +99,6 @@ function App() {
 
   return (
     <div className="app-container">
-      <header>
-        <h1>Pathifier</h1>
-        <p className="subtitle">A picture to line-art converter</p>
-      </header>
       <main>
         <aside className="sidebar left">
           <Controls 
@@ -115,6 +117,20 @@ function App() {
         </aside>
 
         <div className="canvas-area">
+          <div className="canvas-header-overlay">
+            <div className="title-group">
+              <h1>Pathifier</h1>
+              <p className="subtitle">A picture to line-art converter</p>
+            </div>
+            {image && (
+              <div className="canvas-preview-overlay">
+                <ImagePreview 
+                  image={image} 
+                  settings={settings} 
+                />
+              </div>
+            )}
+          </div>
           <DrawingCanvas 
             image={image} 
             settings={settings} 

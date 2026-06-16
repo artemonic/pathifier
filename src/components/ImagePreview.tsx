@@ -63,8 +63,8 @@ const ImagePreview: React.FC<ImagePreviewProps> = ({
     <div className="image-preview-container">
       <canvas 
         ref={canvasRef} 
-        width={260} 
-        height={180}
+        width={200} 
+        height={140}
         style={{ background: '#000', display: 'block' }}
       />
     </div>

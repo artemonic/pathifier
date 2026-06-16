@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react'
 import type { Settings, Point } from '../types'
+import ImagePreview from './ImagePreview'
 import { ImageProcessor } from '../utils/imageProcessor'
 import { smoothPath, segmentPath } from '../utils/smoothing'
 import type { Progress } from '../App'
@@ -138,23 +139,41 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   // Load Image and Initial Canvas Setup
   useEffect(() => {
     if (!image) return
-    imageProcessorRef.current.loadImage(image).then(img => {
-      setOriginalImage(img)
-      const maxWidth = 800
-      const maxHeight = 800
-      let width = img.width
-      let height = img.height
-      if (width > maxWidth) {
-        height *= maxWidth / width
-        width = maxWidth
-      }
-      if (height > maxHeight) {
-        width *= maxHeight / height
-        height = maxHeight
-      }
-      setCanvasSize({ width, height })
-      onSizeChange({ width, height })
-    })
+    
+    const updateCanvasSize = () => {
+      imageProcessorRef.current.loadImage(image).then(img => {
+        setOriginalImage(img)
+        // Ensure the container is ready
+        setTimeout(() => {
+          const container = document.querySelector('.canvas-container')
+          const padding = 60
+          
+          let maxWidth = window.innerWidth * 0.6
+          let maxHeight = window.innerHeight * 0.8
+          
+          if (container) {
+            const rect = container.getBoundingClientRect()
+            if (rect.width > 0 && rect.height > 0) {
+              maxWidth = rect.width - padding
+              maxHeight = rect.height - padding
+            }
+          }
+          
+          let width = img.width
+          let height = img.height
+          const scale = Math.min(maxWidth / width, maxHeight / height)
+          width *= scale
+          height *= scale
+          
+          setCanvasSize({ width, height })
+          onSizeChange({ width, height })
+        }, 50)
+      })
+    }
+
+    updateCanvasSize()
+    window.addEventListener('resize', updateCanvasSize)
+    return () => window.removeEventListener('resize', updateCanvasSize)
   }, [image, onSizeChange])
 
   // Redraw preprocessed image on background canvas
@@ -250,6 +269,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         imageData,
         pointCount: settings.pointCount,
         algorithm: settings.algorithm,
+        clipWhite: settings.clipWhite,
         pointsPerLine: settings.pointsPerLine,
         dither: settings.dither,
         oscAmplitude: settings.oscAmplitude,
@@ -278,6 +298,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     // Only these settings trigger a worker restart
     settings.algorithm,
     settings.pointCount,
+    settings.clipWhite,
     settings.pointsPerLine,
     settings.dither,
     settings.oscAmplitude,

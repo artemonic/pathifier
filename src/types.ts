@@ -29,6 +29,7 @@ export interface Settings {
   maxLineLength: number;
   algorithm: Algorithm;
   pointCount: number;
+  clipWhite: boolean;
   // Dot Matrix Specific
   pointsPerLine: number;
   dither: DitherType;

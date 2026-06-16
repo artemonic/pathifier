@@ -96,7 +96,9 @@ export class ImageProcessor {
         const outer = inner + (vignetteBlur * 0.8) + 0.01
         
         const v = Math.max(0, Math.min(1, (dist - inner) / (outer - inner)))
-        const vignetteEffect = v * (vignetteAmount / 100)
+        // Handle both 0.0-1.0 and 0-100 scales gracefully
+        const normalizedAmount = vignetteAmount > 1.1 ? vignetteAmount / 100 : vignetteAmount
+        const vignetteEffect = v * normalizedAmount
         
         if (vignetteMode === 'black') {
           // Black vignette (multiply)
