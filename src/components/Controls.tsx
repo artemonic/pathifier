@@ -15,6 +15,7 @@ interface ControlsProps {
   onExportSVG: () => void
   isProcessing: boolean
   hasPath: boolean
+  pathCount?: number
 }
 
 const DEFAULTS: Partial<Settings> = {
@@ -42,6 +43,88 @@ const DEFAULTS: Partial<Settings> = {
   oscMode: 'linear',
   spacingMin: 2.0,
   spacingMax: 64.0,
+  lkNeighbors: 8,
+  tspInit: 'farthestInsertion',
+  tsp2Opt: true,
+  tsp2OptPasses: 5,
+  cullJumps: false,
+  cullMaxDistance: 100,
+  stippleIterations: 20,
+}
+
+const getContextDefault = (key: keyof Settings, algorithm: string, dotStyle: string, pointCount: number): any => {
+  if (key === 'lineWidth') {
+    if (algorithm === 'Dot matrix' && dotStyle === 'dots') {
+      return 3.0
+    } else if (algorithm === 'Delaunay') {
+      return 1.0
+    } else {
+      return 2.0
+    }
+  }
+  if (key === 'stippleIterations') {
+    const isDelaunay = algorithm === 'Delaunay'
+    return isDelaunay
+      ? (pointCount > 50000 ? 5 : 10)
+      : (pointCount > 50000 ? 10 : (pointCount > 10000 ? 15 : 20))
+  }
+  return DEFAULTS[key as keyof typeof DEFAULTS]
+}
+
+const applySettingChange = (prev: Settings, key: keyof Settings, value: any, isDirectInput: boolean): Settings => {
+  let finalValue = value
+  const defaultValue = getContextDefault(key, prev.algorithm, prev.dotStyle, prev.pointCount)
+  
+  if (!isDirectInput && typeof value === 'number' && typeof defaultValue === 'number') {
+    const isSmallRange = ['smoothing', 'blacks', 'whites', 'midtones', 'lineWidth', 'vignetteWidth', 'vignetteBlur', 'oscAmplitude', 'spacingMin'].includes(key)
+    const threshold = 
+      key === 'pointCount' ? 2000 : 
+      key === 'contrast' ? 5 : 
+      key === 'vignetteAmount' ? 5 :
+      key === 'maxLineLength' ? 50 : 
+      key === 'pointsPerLine' ? 5 : 
+      key === 'oscFrequencyLevels' ? 0 :
+      key === 'oscMaxFrequency' ? 0 :
+      key === 'oscScanLines' ? 5 :
+      key === 'spacingMin' ? 0.1 :
+      key === 'lkNeighbors' ? 0 :
+      key === 'tsp2OptPasses' ? 0 :
+      key === 'cullMaxDistance' ? 10 :
+      key === 'stippleIterations' ? 5 :
+      (isSmallRange ? 0.05 : 5)
+    
+    if (Math.abs(value - defaultValue) < threshold) {
+      finalValue = defaultValue
+    }
+  }
+
+  const next = { ...prev, [key]: finalValue }
+  
+  if (key === 'pointCount') {
+    const pc = finalValue as number
+    const isDelaunay = prev.algorithm === 'Delaunay'
+    next.stippleIterations = isDelaunay 
+      ? (pc > 50000 ? 5 : 10) 
+      : (pc > 50000 ? 10 : (pc > 10000 ? 15 : 20))
+  }
+  
+  // Proportional midtone adjustment
+  if (key === 'blacks' || key === 'whites') {
+    const oldRange = prev.whites - prev.blacks
+    const relativeMid = oldRange > 1e-6 ? (prev.midtones - prev.blacks) / oldRange : 0.5
+    
+    if (key === 'blacks') {
+      const newBlacks = finalValue as number
+      const newRange = prev.whites - newBlacks
+      next.midtones = parseFloat((newBlacks + relativeMid * newRange).toFixed(2))
+    } else {
+      const newWhites = finalValue as number
+      const newRange = newWhites - prev.blacks
+      next.midtones = parseFloat((prev.blacks + relativeMid * newRange).toFixed(2))
+    }
+  }
+  
+  return next
 }
 
 const RotateCcw = () => (
@@ -113,7 +196,8 @@ const Controls: React.FC<ControlsProps> = React.memo(({
   onImageUpload, 
   onExportSVG,
   isProcessing,
-  hasPath
+  hasPath,
+  pathCount
 }) => {
   const [histogramData, setHistogramData] = useState<Uint32Array | null>(null)
   const imageProcessorRef = useRef<ImageProcessor>(new ImageProcessor())
@@ -157,35 +241,50 @@ const Controls: React.FC<ControlsProps> = React.memo(({
   }, [histogramData, setSettings])
 
   const resetAlgorithmSettings = React.useCallback(() => {
-    if (settings.algorithm === 'TSP' || settings.algorithm === 'Delaunay') {
-      setSettings(prev => ({ 
-        ...prev, 
-        pointCount: DEFAULTS.pointCount!,
-        smoothing: DEFAULTS.smoothing!,
-        maxLineLength: DEFAULTS.maxLineLength!
-      }))
-    } else if (settings.algorithm === 'Dot matrix') {
-      setSettings(prev => ({ 
-        ...prev, 
-        pointsPerLine: DEFAULTS.pointsPerLine!,
-        dither: DEFAULTS.dither!,
-        dotStyle: DEFAULTS.dotStyle!,
-        circleDiameter: DEFAULTS.circleDiameter!,
-        lineWidth: DEFAULTS.lineWidth!
-      }))
-    } else if (settings.algorithm === 'Oscillations') {
-      setSettings(prev => ({ 
-        ...prev, 
-        oscScanLines: DEFAULTS.oscScanLines!,
-        oscAmplitude: DEFAULTS.oscAmplitude!,
-        oscMaxFrequency: DEFAULTS.oscMaxFrequency!,
-        oscFrequencyLevels: DEFAULTS.oscFrequencyLevels!,
-        oscMode: DEFAULTS.oscMode!,
-        smoothing: DEFAULTS.smoothing!,
-        lineWidth: DEFAULTS.lineWidth!
-      }))
-    }
-  }, [settings.algorithm, setSettings])
+    setSettings(prev => {
+      if (prev.algorithm === 'TSP' || prev.algorithm === 'Delaunay') {
+        const pc = DEFAULTS.pointCount || 10000
+        const isDelaunay = prev.algorithm === 'Delaunay'
+        const iterations = isDelaunay 
+          ? (pc > 50000 ? 5 : 10) 
+          : (pc > 50000 ? 10 : (pc > 10000 ? 15 : 20))
+        return {
+          ...prev, 
+          pointCount: pc,
+          smoothing: DEFAULTS.smoothing!,
+          maxLineLength: DEFAULTS.maxLineLength!,
+          lkNeighbors: DEFAULTS.lkNeighbors!,
+          tspInit: DEFAULTS.tspInit as any,
+          tsp2Opt: DEFAULTS.tsp2Opt!,
+          tsp2OptPasses: DEFAULTS.tsp2OptPasses!,
+          cullJumps: DEFAULTS.cullJumps!,
+          cullMaxDistance: DEFAULTS.cullMaxDistance!,
+          stippleIterations: iterations
+        }
+      } else if (prev.algorithm === 'Dot matrix') {
+        return { 
+          ...prev, 
+          pointsPerLine: DEFAULTS.pointsPerLine!,
+          dither: DEFAULTS.dither!,
+          dotStyle: DEFAULTS.dotStyle!,
+          circleDiameter: DEFAULTS.circleDiameter!,
+          lineWidth: prev.dotStyle === 'dots' ? 3.0 : 2.0
+        }
+      } else if (prev.algorithm === 'Oscillations') {
+        return { 
+          ...prev, 
+          oscScanLines: DEFAULTS.oscScanLines!,
+          oscAmplitude: DEFAULTS.oscAmplitude!,
+          oscMaxFrequency: DEFAULTS.oscMaxFrequency!,
+          oscFrequencyLevels: DEFAULTS.oscFrequencyLevels!,
+          oscMode: DEFAULTS.oscMode!,
+          smoothing: DEFAULTS.smoothing!,
+          lineWidth: 2.0
+        }
+      }
+      return prev
+    })
+  }, [setSettings])
 
   const handleFileChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -196,69 +295,18 @@ const Controls: React.FC<ControlsProps> = React.memo(({
   }, [onImageUpload])
 
   const updateSetting = React.useCallback(<K extends keyof Settings>(key: K, value: Settings[K], isDirectInput = false) => {
-    let finalValue = value
-    const defaultValue = DEFAULTS[key as keyof typeof DEFAULTS]
-    
-    if (!isDirectInput && typeof value === 'number' && typeof defaultValue === 'number') {
-      const isSmallRange = ['smoothing', 'blacks', 'whites', 'midtones', 'lineWidth', 'vignetteWidth', 'vignetteBlur', 'oscAmplitude', 'spacingMin'].includes(key)
-      const threshold = 
-        key === 'pointCount' ? 2000 : 
-        key === 'contrast' ? 5 : 
-        key === 'vignetteAmount' ? 5 :
-        key === 'maxLineLength' ? 50 : 
-        key === 'pointsPerLine' ? 5 : 
-        key === 'oscFrequencyLevels' ? 0 :
-        key === 'oscMaxFrequency' ? 0 :
-        key === 'oscScanLines' ? 5 :
-        key === 'spacingMin' ? 0.1 :
-        (isSmallRange ? 0.05 : 5)
-      
-      if (Math.abs(value - defaultValue) < threshold) {
-        finalValue = defaultValue as unknown as Settings[K]
-      }
-    }
-
-    setSettings(prev => {
-      const next = { ...prev, [key]: finalValue }
-      
-      // Proportional midtone adjustment
-      if (key === 'blacks' || key === 'whites') {
-        const oldRange = prev.whites - prev.blacks
-        const relativeMid = oldRange > 1e-6 ? (prev.midtones - prev.blacks) / oldRange : 0.5
-        
-        if (key === 'blacks') {
-          const newBlacks = finalValue as number
-          const newRange = prev.whites - newBlacks
-          next.midtones = parseFloat((newBlacks + relativeMid * newRange).toFixed(2))
-        } else {
-          const newWhites = finalValue as number
-          const newRange = newWhites - prev.blacks
-          next.midtones = parseFloat((prev.blacks + relativeMid * newRange).toFixed(2))
-        }
-      }
-      
-      return next
-    })
+    setSettings(prev => applySettingChange(prev, key, value, isDirectInput))
   }, [setSettings])
 
   const resetSetting = React.useCallback((key: keyof Settings) => {
-    let defaultValue = DEFAULTS[key as keyof typeof DEFAULTS]
-    
-    // Context-aware defaults for lineWidth
-    if (key === 'lineWidth') {
-      if (settings.algorithm === 'Dot matrix' && settings.dotStyle === 'dots') {
-        defaultValue = 3.0
-      } else if (settings.algorithm === 'Delaunay') {
-        defaultValue = 1.0
-      } else {
-        defaultValue = 2.0
+    setSettings(prev => {
+      const defaultValue = getContextDefault(key, prev.algorithm, prev.dotStyle, prev.pointCount)
+      if (defaultValue !== undefined) {
+        return applySettingChange(prev, key, defaultValue, true)
       }
-    }
-
-    if (defaultValue !== undefined) {
-      updateSetting(key, defaultValue as any, true)
-    }
-  }, [updateSetting, settings.algorithm, settings.dotStyle])
+      return prev
+    })
+  }, [setSettings])
 
   const resetColorGrading = React.useCallback(() => {
     setSettings(prev => ({
@@ -287,7 +335,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
     if (levels.midtones !== undefined) updateSetting('midtones', levels.midtones, true)
   }, [updateSetting])
 
-  const handleAlgorithmChange = (newAlgorithm: Algorithm) => {
+  const handleAlgorithmChange = React.useCallback((newAlgorithm: Algorithm) => {
     setSettings(prev => {
       // First update the algorithm
       const updated = { ...prev, algorithm: newAlgorithm }
@@ -301,15 +349,21 @@ const Controls: React.FC<ControlsProps> = React.memo(({
       }
 
       // Return settings with reset post-processing values
+      const pc = updated.pointCount
+      const newStippleIterations = newAlgorithm === 'Delaunay'
+        ? (pc > 50000 ? 5 : 10)
+        : (pc > 50000 ? 10 : (pc > 10000 ? 15 : 20))
+
       return {
         ...updated,
         lineWidth: newLineWidth,
         smoothing: DEFAULTS.smoothing!,
         maxLineLength: DEFAULTS.maxLineLength!,
-        circleDiameter: DEFAULTS.circleDiameter!
+        circleDiameter: DEFAULTS.circleDiameter!,
+        stippleIterations: newStippleIterations
       }
     })
-  }
+  }, [setSettings])
 
   return (
     <div className="controls">
@@ -607,6 +661,31 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                   </div>
                 </div>
 
+                <div className="controls-group">
+                  <div className="label-row">
+                    <div className="label-with-reset">
+                      <label>Max Iterations per Pass</label>
+                      <button className="reset-btn" onClick={() => resetSetting('stippleIterations')} title="Reset">
+                        <RotateCcw />
+                      </button>
+                    </div>
+                    <input 
+                      type="number" 
+                      value={settings.stippleIterations} 
+                      onChange={(e) => updateSetting('stippleIterations', parseInt(e.target.value) || 20, true)}
+                      className="number-input wide"
+                      step="5"
+                    />
+                  </div>
+                  <SliderWithArrows 
+                    min={5} 
+                    max={10000} 
+                    step={5}
+                    value={settings.stippleIterations} 
+                    onChange={(val, isDirect) => updateSetting('stippleIterations', val, isDirect)}
+                  />
+                </div>
+
                 {settings.algorithm === 'Delaunay' && (
                   <>
                     <div className="controls-group">
@@ -658,6 +737,132 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                         onChange={(val, isDirect) => updateSetting('spacingMax', val, isDirect)}
                       />
                     </div>
+                  </>
+                )}
+
+                {settings.algorithm === 'TSP' && (
+                  <>
+                    <div className="controls-group">
+                      <div className="label-row">
+                        <div className="label-with-reset">
+                          <label>Path Initialization</label>
+                          <button className="reset-btn" onClick={() => resetSetting('tspInit')} title="Reset">
+                            <RotateCcw />
+                          </button>
+                        </div>
+                      </div>
+                      <select 
+                        value={settings.tspInit} 
+                        onChange={(e) => updateSetting('tspInit', e.target.value as any)}
+                      >
+                        <option value="farthestInsertion">Farthest Insertion (Organic, Low Crossing)</option>
+                        <option value="nearestNeighbor">Nearest Neighbor (Fast, Jagged)</option>
+                        <option value="hilbert">Hilbert Curve (Instant, Grid-like)</option>
+                        <option value="random">Random Tour (Scribble)</option>
+                      </select>
+                    </div>
+
+                    <div className="controls-group">
+                      <div className="checkbox-row">
+                        <input 
+                          id="tsp-2opt"
+                          type="checkbox" 
+                          checked={settings.tsp2Opt} 
+                          onChange={(e) => updateSetting('tsp2Opt', e.target.checked)} 
+                        />
+                        <label htmlFor="tsp-2opt">2-Opt Local Optimization</label>
+                      </div>
+                    </div>
+
+                    {settings.tsp2Opt && (
+                      <>
+                        <div className="controls-group">
+                          <div className="label-row">
+                            <div className="label-with-reset">
+                              <label>2-Opt Max Passes</label>
+                              <button className="reset-btn" onClick={() => resetSetting('tsp2OptPasses')} title="Reset">
+                                <RotateCcw />
+                              </button>
+                            </div>
+                            <input 
+                              type="number" 
+                              value={settings.tsp2OptPasses} 
+                              onChange={(e) => updateSetting('tsp2OptPasses', parseInt(e.target.value) || 1, true)}
+                              className="number-input"
+                            />
+                          </div>
+                          <SliderWithArrows 
+                            min={1} 
+                            max={20} 
+                            step={1}
+                            value={settings.tsp2OptPasses} 
+                            onChange={(val, isDirect) => updateSetting('tsp2OptPasses', val, isDirect)}
+                          />
+                        </div>
+
+                        <div className="controls-group">
+                          <div className="label-row">
+                            <div className="label-with-reset">
+                              <label>Candidate Neighbors</label>
+                              <button className="reset-btn" onClick={() => resetSetting('lkNeighbors')} title="Reset">
+                                <RotateCcw />
+                              </button>
+                            </div>
+                            <input 
+                              type="number" 
+                              value={settings.lkNeighbors} 
+                              onChange={(e) => updateSetting('lkNeighbors', parseInt(e.target.value) || 2, true)}
+                              className="number-input"
+                            />
+                          </div>
+                          <SliderWithArrows 
+                            min={2} 
+                            max={20} 
+                            step={1}
+                            value={settings.lkNeighbors} 
+                            onChange={(val, isDirect) => updateSetting('lkNeighbors', val, isDirect)}
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    <div className="controls-group">
+                      <div className="checkbox-row">
+                        <input 
+                          id="cull-jumps"
+                          type="checkbox" 
+                          checked={settings.cullJumps} 
+                          onChange={(e) => updateSetting('cullJumps', e.target.checked)} 
+                        />
+                        <label htmlFor="cull-jumps">Cull Long Jumps</label>
+                      </div>
+                    </div>
+
+                    {settings.cullJumps && (
+                      <div className="controls-group">
+                        <div className="label-row">
+                          <div className="label-with-reset">
+                            <label>Max Jump Distance</label>
+                            <button className="reset-btn" onClick={() => resetSetting('cullMaxDistance')} title="Reset">
+                              <RotateCcw />
+                            </button>
+                          </div>
+                          <input 
+                            type="number" 
+                            value={settings.cullMaxDistance} 
+                            onChange={(e) => updateSetting('cullMaxDistance', parseInt(e.target.value) || 10, true)}
+                            className="number-input"
+                          />
+                        </div>
+                        <SliderWithArrows 
+                          min={10} 
+                          max={500} 
+                          step={5}
+                          value={settings.cullMaxDistance} 
+                          onChange={(val, isDirect) => updateSetting('cullMaxDistance', val, isDirect)}
+                        />
+                      </div>
+                    )}
                   </>
                 )}
               </>
@@ -1021,6 +1226,12 @@ const Controls: React.FC<ControlsProps> = React.memo(({
           >
             Export SVG
           </button>
+
+          {hasPath && pathCount !== undefined && (
+            <div className="path-stats">
+              Separate curves: <strong>{pathCount}</strong>
+            </div>
+          )}
 
           {isProcessing && <p className="processing-text">Processing algorithm...</p>}
         </>

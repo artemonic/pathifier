@@ -2,7 +2,7 @@ import type { Point, DitherType } from '../types'
 import Delaunator from 'delaunator'
 
 interface WorkerMessage {
-  type: 'START'
+  type: 'START' | 'RUN_PATH_ONLY'
   imageData: ImageData
   pointCount: number
   algorithm: string
@@ -16,13 +16,15 @@ interface WorkerMessage {
   oscMode?: 'linear' | 'spiral'
   spacingMin?: number
   spacingMax?: number
+  lkNeighbors?: number
+  tspInit?: 'random' | 'hilbert' | 'nearestNeighbor' | 'farthestInsertion'
+  tsp2Opt?: boolean
+  tsp2OptPasses?: number
+  stippleIterations?: number
+  points?: Point[]
 }
 
-function twoOptSwap(points: Point[], i: number, j: number): Point[] {
-  const newPoints = points.slice(0, i)
-  const segment = points.slice(i, j + 1).reverse()
-  return [...newPoints, ...segment, ...points.slice(j + 1)]
-}
+
 
 function weightedVoronoiStippling(imageData: ImageData, targetPointCount: number, iterations: number = 40, spacingMin: number = 2, spacingMax: number = 20, clipWhite: boolean = false): Point[] {
   const { data, width, height } = imageData
@@ -59,8 +61,13 @@ function weightedVoronoiStippling(imageData: ImageData, targetPointCount: number
   const head = new Int32Array(cols * rows)
   const next = new Int32Array(currentPoints.length)
 
+  const progressInterval = Math.max(1, Math.floor(iterations / 20))
+  const intermediateInterval = Math.max(1, Math.floor(iterations / 10))
+
   for (let iter = 0; iter < iterations; iter++) {
-    self.postMessage({ type: 'PROGRESS', message: `Refining city layout (${iter + 1}/${iterations})...`, percent: 5 + Math.floor((iter/iterations)*25) })
+    if (iter % progressInterval === 0 || iter === iterations - 1) {
+      self.postMessage({ type: 'PROGRESS', message: `Refining city layout (${iter + 1}/${iterations})...`, percent: 5 + Math.floor((iter/iterations)*25) })
+    }
     const sumsX = new Float32Array(currentPoints.length), sumsY = new Float32Array(currentPoints.length), counts = new Float32Array(currentPoints.length)
     
     head.fill(-1)
@@ -96,12 +103,124 @@ function weightedVoronoiStippling(imageData: ImageData, targetPointCount: number
         if (nearestIdx !== -1) { sumsX[nearestIdx] += sx * weight; sumsY[nearestIdx] += sy * weight; counts[nearestIdx] += weight }
       }
     }
-    for (let i = 0; i < currentPoints.length; i++) { if (counts[i] > 0) { currentPoints[i].x = sumsX[i]/counts[i]; currentPoints[i].y = sumsY[i]/counts[i] } }
-    if (iter % 5 === 0 || iter === iterations - 1) {
+    let totalMovement = 0
+    let movedCount = 0
+    for (let i = 0; i < currentPoints.length; i++) {
+      if (counts[i] > 0) {
+        const oldX = currentPoints[i].x
+        const oldY = currentPoints[i].y
+        currentPoints[i].x = sumsX[i]/counts[i]
+        currentPoints[i].y = sumsY[i]/counts[i]
+        const dx = currentPoints[i].x - oldX
+        const dy = currentPoints[i].y - oldY
+        totalMovement += Math.sqrt(dx * dx + dy * dy)
+        movedCount++
+      }
+    }
+    const avgMovement = movedCount > 0 ? (totalMovement / movedCount) : 0
+    if (iter % intermediateInterval === 0 || iter === iterations - 1) self.postMessage({ type: 'INTERMEDIATE', path: [...currentPoints], isStipple: true })
+
+    if (iter > 2 && avgMovement < 0.02) {
+      self.postMessage({ type: 'PROGRESS', message: `Refining city layout (converged at ${iter + 1}/${iterations})...`, percent: 30 })
       self.postMessage({ type: 'INTERMEDIATE', path: [...currentPoints], isStipple: true })
+      break
     }
   }
   return currentPoints
+}
+
+function getNearestNeighbors(points: Point[], M: number): Int32Array {
+  const n = points.length
+  const neighbors = new Int32Array(n * M)
+  neighbors.fill(-1)
+  
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (let i = 0; i < n; i++) {
+    const p = points[i]
+    if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y
+    if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y
+  }
+  const width = maxX - minX || 1
+  const height = maxY - minY || 1
+  
+  const cellSize = Math.max(2.0, 3.0 * Math.sqrt((width * height) / n))
+  const cols = Math.ceil(width / cellSize), rows = Math.ceil(height / cellSize)
+  
+  const head = new Int32Array(cols * rows)
+  head.fill(-1)
+  const next = new Int32Array(n)
+  
+  for (let i = 0; i < n; i++) {
+    const p = points[i]
+    const cx = Math.max(0, Math.min(cols - 1, Math.floor((p.x - minX) / cellSize)))
+    const cy = Math.max(0, Math.min(rows - 1, Math.floor((p.y - minY) / cellSize)))
+    const binIdx = cy * cols + cx
+    next[i] = head[binIdx]
+    head[binIdx] = i
+  }
+  
+  const distBuf = new Float32Array(M)
+  const idxBuf = new Int32Array(M)
+  
+  for (let i = 0; i < n; i++) {
+    const p = points[i]
+    const cx = Math.max(0, Math.min(cols - 1, Math.floor((p.x - minX) / cellSize)))
+    const cy = Math.max(0, Math.min(rows - 1, Math.floor((p.y - minY) / cellSize)))
+    
+    let foundCount = 0
+    distBuf.fill(Infinity)
+    idxBuf.fill(-1)
+    
+    let ring = 1
+    const maxRing = Math.max(cols, rows)
+    while (foundCount < M && ring < maxRing) {
+      const minDistToOuter = (ring - 1) * cellSize
+      if (foundCount >= M && distBuf[M - 1] < minDistToOuter * minDistToOuter) {
+        break
+      }
+      
+      for (let dy = -ring; dy <= ring; dy++) {
+        const ny = cy + dy
+        if (ny < 0 || ny >= rows) continue
+        
+        const isBorderY = (dy === -ring || dy === ring)
+        for (let dx = -ring; dx <= ring; dx++) {
+          if (!isBorderY && dx !== -ring && dx !== ring) continue
+          
+          const nx = cx + dx
+          if (nx < 0 || nx >= cols) continue
+          
+          let pIdx = head[ny * cols + nx]
+          while (pIdx !== -1) {
+            if (pIdx !== i) {
+              const op = points[pIdx]
+              const d2 = (p.x - op.x) ** 2 + (p.y - op.y) ** 2
+              
+              if (d2 < distBuf[M - 1]) {
+                let ins = M - 1
+                while (ins > 0 && d2 < distBuf[ins - 1]) {
+                  distBuf[ins] = distBuf[ins - 1]
+                  idxBuf[ins] = idxBuf[ins - 1]
+                  ins--
+                }
+                distBuf[ins] = d2
+                idxBuf[ins] = pIdx
+                if (foundCount < M) foundCount++
+              }
+            }
+            pIdx = next[pIdx]
+          }
+        }
+      }
+      ring++
+    }
+    
+    for (let j = 0; j < M; j++) {
+      neighbors[i * M + j] = idxBuf[j]
+    }
+  }
+  
+  return neighbors
 }
 
 function hilbertIndex(x: number, y: number, n: number): number {
@@ -117,121 +236,401 @@ function hilbertIndex(x: number, y: number, n: number): number {
   return d
 }
 
-function hilbertSort(points: Point[]): Point[] {
-  if (points.length === 0) return []
+function hilbertSort(points: Point[]): Int32Array {
+  const n = points.length
+  if (n === 0) return new Int32Array(0)
+  
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const p of points) {
+  for (let i = 0; i < n; i++) {
+    const p = points[i]
     if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y
     if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y
   }
+  
   const size = Math.max(maxX - minX, maxY - minY, 1)
-  const n = Math.pow(2, Math.ceil(Math.log2(size)) + 1)
-  return [...points].sort((a, b) => {
-    const idxA = hilbertIndex(Math.floor(a.x - minX), Math.floor(a.y - minY), n)
-    const idxB = hilbertIndex(Math.floor(b.x - minX), Math.floor(b.y - minY), n)
-    return idxA - idxB
-  })
+  const sizeN = Math.pow(2, Math.ceil(Math.log2(size)) + 1)
+  
+  const hIndices = new Float64Array(n)
+  for (let i = 0; i < n; i++) {
+    hIndices[i] = hilbertIndex(Math.floor(points[i].x - minX), Math.floor(points[i].y - minY), sizeN)
+  }
+  
+  const indices = new Int32Array(n)
+  for (let i = 0; i < n; i++) indices[i] = i
+  
+  const indicesArray = Array.from(indices)
+  indicesArray.sort((a, b) => hIndices[a] - hIndices[b])
+  
+  return new Int32Array(indicesArray)
 }
 
-function solveTSP(points: Point[], imageData: ImageData, clipWhite: boolean) {
-  if (points.length < 4) return points
-  self.postMessage({ type: 'PROGRESS', message: 'Planning path...', percent: 35 })
+function nearestNeighborTour(
+  points: Point[],
+  neighbors: Int32Array,
+  M: number,
+  getCost: (p1: Point, p2: Point) => number,
+  startCity: number
+): Int32Array {
+  const n = points.length
+  const tour = new Int32Array(n)
+  const visited = new Uint8Array(n)
   
-  const { width, height } = imageData
-  const isWhite = new Uint8Array(width * height)
-  if (clipWhite) {
-    const data = imageData.data
-    for (let i = 0; i < data.length; i += 4) {
-      // Threshold for "forbidden" areas
-      if (data[i] > 240) isWhite[i / 4] = 1
+  let curr = startCity
+  tour[0] = curr
+  visited[curr] = 1
+  
+  for (let i = 1; i < n; i++) {
+    let bestDist = Infinity
+    let bestIdx = -1
+    const pCurr = points[curr]
+    
+    // Check precomputed neighbors of curr first
+    const nStart = curr * M
+    for (let k = 0; k < M; k++) {
+      const neighbor = neighbors[nStart + k]
+      if (neighbor === -1) break
+      if (visited[neighbor] === 0) {
+        const d = getCost(pCurr, points[neighbor])
+        if (d < bestDist) {
+          bestDist = d
+          bestIdx = neighbor
+        }
+      }
+    }
+    
+    // Fallback to full scan if no unvisited neighbor is found
+    if (bestIdx === -1) {
+      for (let j = 0; j < n; j++) {
+        if (visited[j] === 0) {
+          const d = getCost(pCurr, points[j])
+          if (d < bestDist) {
+            bestDist = d
+            bestIdx = j
+          }
+        }
+      }
+    }
+    
+    if (bestIdx !== -1) {
+      curr = bestIdx
+      tour[i] = curr
+      visited[curr] = 1
+    } else {
+      // Emergency fallback
+      for (let j = 0; j < n; j++) {
+        if (visited[j] === 0) {
+          curr = j
+          tour[i] = curr
+          visited[curr] = 1
+          break
+        }
+      }
     }
   }
+  
+  return tour
+}
+
+function solveFarthestInsertion(points: Point[]): number[] {
+  const n = points.length
+  if (n < 3) {
+    const tour = new Array(n)
+    for (let i = 0; i < n; i++) tour[i] = i
+    return tour
+  }
+
+  // Fast Euclidean squared distance helper for finding farthest
+  const distSq = (i: number, j: number): number => {
+    const dx = points[i].x - points[j].x
+    const dy = points[i].y - points[j].y
+    return dx * dx + dy * dy
+  }
+
+  // Find first point (index 0) and the point farthest from it
+  let first = 0
+  let second = -1
+  let maxDSq = -1
+  for (let i = 1; i < n; i++) {
+    const d = distSq(first, i)
+    if (d > maxDSq) {
+      maxDSq = d
+      second = i
+    }
+  }
+
+  const tourNext = new Int32Array(n)
+  const tourPrev = new Int32Array(n)
+  tourNext.fill(-1)
+  tourPrev.fill(-1)
+
+  tourNext[first] = second
+  tourPrev[second] = first
+  tourNext[second] = first
+  tourPrev[first] = second
+
+  const inTour = new Uint8Array(n)
+  inTour[first] = 1
+  inTour[second] = 1
+
+  // minDist contains squared distance from each point to the nearest point in the tour
+  const minDist = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    if (i !== first && i !== second) {
+      const d1 = distSq(i, first)
+      const d2 = distSq(i, second)
+      minDist[i] = d1 < d2 ? d1 : d2
+    }
+  }
+
+  // Cache of edge lengths in the tour: edgeLengths[u] is Euclidean distance from u to tourNext[u]
+  const edgeLengths = new Float32Array(n)
+  edgeLengths[first] = Math.sqrt(maxDSq)
+  edgeLengths[second] = edgeLengths[first]
+
+  // Insert remaining points
+  for (let step = 2; step < n; step++) {
+    if (step % 1000 === 0) {
+      self.postMessage({ 
+        type: 'PROGRESS', 
+        message: `Farthest Insertion: routing path (${step}/${n})...`, 
+        percent: 35 + Math.floor((step / n) * 15) 
+      })
+    }
+
+    // Find the unvisited point k farthest from the tour
+    let farthestIdx = -1
+    let maxDistToTour = -1
+    for (let i = 0; i < n; i++) {
+      if (inTour[i] === 0) {
+        if (minDist[i] > maxDistToTour) {
+          maxDistToTour = minDist[i]
+          farthestIdx = i
+        }
+      }
+    }
+
+    if (farthestIdx === -1) break
+
+    // Find the edge (curr, nxt) in the tour that minimizes insertion cost:
+    // dist(curr, farthestIdx) + dist(farthestIdx, nxt) - dist(curr, nxt)
+    let bestPrev = -1
+    let bestNext = -1
+    let minInsertCost = Infinity
+    let bestDist1 = 0
+    let bestDist2 = 0
+
+    const pK = points[farthestIdx]
+
+    let curr = first
+    do {
+      const nxt = tourNext[curr]
+      const pCurr = points[curr]
+      const pNxt = points[nxt]
+      
+      const d1 = Math.sqrt((pCurr.x - pK.x)**2 + (pCurr.y - pK.y)**2)
+      const d2 = Math.sqrt((pNxt.x - pK.x)**2 + (pNxt.y - pK.y)**2)
+      const d3 = edgeLengths[curr]
+      const cost = d1 + d2 - d3
+
+      if (cost < minInsertCost) {
+        minInsertCost = cost
+        bestPrev = curr
+        bestNext = nxt
+        bestDist1 = d1
+        bestDist2 = d2
+      }
+      curr = nxt
+    } while (curr !== first)
+
+    // Insert farthestIdx
+    tourNext[bestPrev] = farthestIdx
+    tourPrev[farthestIdx] = bestPrev
+    tourNext[farthestIdx] = bestNext
+    tourPrev[bestNext] = farthestIdx
+    inTour[farthestIdx] = 1
+
+    // Update edge lengths cache
+    edgeLengths[bestPrev] = bestDist1
+    edgeLengths[farthestIdx] = bestDist2
+
+    // Update minDist for unvisited points
+    for (let i = 0; i < n; i++) {
+      if (inTour[i] === 0) {
+        const d = distSq(i, farthestIdx)
+        if (d < minDist[i]) {
+          minDist[i] = d
+        }
+      }
+    }
+  }
+
+  // Convert double-linked list to ordered array of indices
+  const tour = new Array(n)
+  let curr = first
+  for (let i = 0; i < n; i++) {
+    tour[i] = curr
+    curr = tourNext[curr]
+  }
+  return tour
+}
+
+function solveTSP(
+  points: Point[],
+  lkNeighbors?: number,
+  tspInit?: 'random' | 'hilbert' | 'nearestNeighbor' | 'farthestInsertion',
+  tsp2Opt?: boolean,
+  tsp2OptPasses?: number
+): Point[] {
+  const n = points.length
+  if (n < 4) return points
+  self.postMessage({ type: 'PROGRESS', message: 'Routing path...', percent: 35 })
 
   const getDist = (p1: Point, p2: Point): number => {
     const dx = p1.x - p2.x, dy = p1.y - p2.y
     return Math.sqrt(dx * dx + dy * dy)
   }
 
-  // Balanced penalty: Avoid highlights but don't create knots to do it
-  const getPenalty = (p1: Point, p2: Point, d: number): number => {
-    if (!clipWhite || d < 12) return 0
-    
-    // Sample only midpoint for speed. If midpoint is in white, it's likely crossing.
-    const mx = Math.floor((p1.x + p2.x) * 0.5)
-    const my = Math.floor((p1.y + p2.y) * 0.5)
-    
-    if (mx >= 0 && mx < width && my >= 0 && my < height) {
-      if (isWhite[my * width + mx]) return d * 10 // Strong 10x penalty to ensure long crossings break
+  const initMethod = tspInit || 'farthestInsertion'
+  const tour = new Int32Array(n)
+
+  // 1. Initialize tour
+  if (initMethod === 'hilbert') {
+    self.postMessage({ type: 'PROGRESS', message: 'Hilbert routing...', percent: 38 })
+    const sortedIndices = hilbertSort(points)
+    tour.set(sortedIndices)
+  } else if (initMethod === 'farthestInsertion') {
+    self.postMessage({ type: 'PROGRESS', message: 'Farthest Insertion routing...', percent: 38 })
+    const insertionTour = solveFarthestInsertion(points)
+    for (let i = 0; i < n; i++) tour[i] = insertionTour[i]
+  } else if (initMethod === 'nearestNeighbor') {
+    self.postMessage({ type: 'PROGRESS', message: 'Nearest Neighbor routing...', percent: 38 })
+    const M_nn = 5
+    const neighbors_nn = getNearestNeighbors(points, M_nn)
+    const nnTour = nearestNeighborTour(points, neighbors_nn, M_nn, getDist, 0)
+    tour.set(nnTour)
+  } else {
+    // random tour
+    for (let i = 0; i < n; i++) {
+      tour[i] = i
     }
-    return 0
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const temp = tour[i]
+      tour[i] = tour[j]
+      tour[j] = temp
+    }
   }
 
-  let tour = hilbertSort(points)
-  self.postMessage({ type: 'PROGRESS', message: 'Optimizing flow...', percent: 45 })
-  
-  let improved = true, iterations = 0
-  const n = tour.length
-  // Reduced iterations for speed (-30% more)
-  const maxIterations = n > 50000 ? 25 : (n > 10000 ? 50 : 100)
-  
-  while (improved && iterations < maxIterations) {
-    improved = false
-    // Narrow base window for speed, but dynamic expansion
-    const baseWindowSize = n > 50000 ? 30 : (n > 10000 ? 100 : 400)
-    let swapCount = 0
-    
-    for (let i = 1; i < n - 2; i++) {
-      const p1 = tour[i-1], p2 = tour[i]
-      const d12 = getDist(p1, p2)
-      const cost12 = d12 + getPenalty(p1, p2, d12)
+  // 2. Run 2-opt Refinement if enabled
+  if (tsp2Opt) {
+    const M = lkNeighbors || 8
+    const passes = tsp2OptPasses || 5
+    const maxIterations = 10000
 
-      // Guarantee removal of long/crossing lines: search ENTIRE path ('n')
-      const searchWindow = (cost12 > d12 + 1 || d12 > 15) ? n : baseWindowSize
-      const jump = Math.min(n - 1, i + searchWindow)
+    self.postMessage({ type: 'PROGRESS', message: 'Building spatial index...', percent: 55 })
+    const neighbors = getNearestNeighbors(points, M)
 
-      for (let j = i + 1; j < jump; j++) {
-        const p3 = tour[j], p4 = tour[j+1]
-        
-        // Exact Euclidean check is required to guarantee no crossings
-        const d34 = getDist(p3, p4)
-        const d13 = getDist(p1, p3)
-        const d24 = getDist(p2, p4)
+    // Track tour and position mapping
+    const pos = new Int32Array(n)
+    for (let i = 0; i < n; i++) {
+      pos[tour[i]] = i
+    }
 
-        const eCurrent = d12 + d34
-        const eNew = d13 + d24
-        
-        // Euclidean improvement (removes crossing)
-        if (eNew < eCurrent - 0.001) {
-          tour = twoOptSwap(tour, i, j)
-          improved = true; swapCount++
-          break 
-        }
+    self.postMessage({ type: 'PROGRESS', message: 'Refining path (2-opt optimization)...', percent: 60 })
 
-        // Penalty improvement (avoids white areas)
-        if (clipWhite && eNew < eCurrent + 2) {
-          const cost34 = d34 + getPenalty(p3, p4, d34)
-          const cost13 = d13 + getPenalty(p1, p3, d13)
-          const cost24 = d24 + getPenalty(p2, p4, d24)
+    let lastPostTime = 0
 
-          if ((cost13 + cost24) < (cost12 + cost34) - 0.1) {
-            tour = twoOptSwap(tour, i, j)
-            improved = true; swapCount++
-            break
+    for (let pass = 1; pass <= passes; pass++) {
+      let improved = true
+      let iteration = 0
+
+      while (improved && iteration < maxIterations) {
+        improved = false
+        iteration++
+
+        // Search start city randomly to avoid ordering bias
+        const startCitySearch = Math.floor(Math.random() * n)
+
+        for (let step = 0; step < n; step++) {
+          const i = (startCitySearch + step) % n
+          const u = tour[i]
+
+          const uNeighborsStart = u * M
+          for (let k = 0; k < M; k++) {
+            const v = neighbors[uNeighborsStart + k]
+            if (v === -1) break
+
+            const j = pos[v]
+
+            // Order positions so start_pos < end_pos
+            let start_pos = i
+            let end_pos = j
+            if (end_pos < start_pos) {
+              const tmp = start_pos
+              start_pos = end_pos
+              end_pos = tmp
+            }
+
+            // Must not be adjacent edges
+            if (end_pos <= start_pos + 1 || (start_pos === 0 && end_pos === n - 1)) {
+              continue
+            }
+
+            const a = tour[start_pos]
+            const b = tour[start_pos + 1]
+            const c = tour[end_pos]
+            const d = tour[(end_pos + 1) % n]
+
+            // Calculate current cost vs swapped cost
+            const currentCost = getDist(points[a], points[b]) + getDist(points[c], points[d])
+            const newCost = getDist(points[a], points[c]) + getDist(points[b], points[d])
+            const delta = newCost - currentCost
+
+            if (delta < -0.001) {
+              // Apply 2-opt swap by reversing tour[start_pos + 1 ... end_pos]
+              let l = start_pos + 1
+              let r = end_pos
+              while (l < r) {
+                const temp = tour[l]
+                tour[l] = tour[r]
+                tour[r] = temp
+                pos[tour[l]] = l
+                pos[tour[r]] = r
+                l++
+                r--
+              }
+              improved = true
+              break
+            }
           }
         }
-      }
-    }
-    
-    iterations++
-    // Only exit early if basically zero swaps occurred
-    if (iterations > 15 && swapCount === 0) break
 
-    const mod = n > 50000 ? 5 : 2
-    if (iterations % mod === 0) self.postMessage({ type: 'INTERMEDIATE', path: [...tour] })
-    
-    self.postMessage({ type: 'PROGRESS', message: `Refining art (${iterations})...`, percent: 45 + Math.floor((iterations/maxIterations)*55) })
+        // Periodically post intermediate path
+        const now = performance.now()
+        if (now - lastPostTime > 33) {
+          self.postMessage({ type: 'INTERMEDIATE', path: tourToPoints(tour, points) })
+          lastPostTime = now
+        }
+      }
+
+      self.postMessage({ 
+        type: 'PROGRESS', 
+        message: `Refining path (Pass ${pass}/${passes})...`, 
+        percent: 60 + Math.floor((pass / passes) * 40) 
+      })
+    }
   }
-  return tour
+
+  // Return the final tour
+  return tourToPoints(tour, points)
+}
+
+function tourToPoints(tour: Int32Array, points: Point[]): Point[] {
+  const path = new Array(tour.length)
+  for (let i = 0; i < tour.length; i++) {
+    path[i] = points[tour[i]]
+  }
+  return path
 }
 
 function solveDelaunay(points: Point[]): Point[][] {
@@ -392,7 +791,18 @@ function generateOscillations(imageData: ImageData, scanLines: number, amplitude
 }
 
 self.onmessage = (e: MessageEvent<WorkerMessage>) => {
-  const { type, imageData, pointCount, algorithm, clipWhite, pointsPerLine, dither, oscAmplitude, oscFrequencyLevels, oscMaxFrequency, oscScanLines, oscMode, spacingMin, spacingMax } = e.data
+  const { type, imageData, pointCount, algorithm, clipWhite, pointsPerLine, dither, oscAmplitude, oscFrequencyLevels, oscMaxFrequency, oscScanLines, oscMode, spacingMin, spacingMax, lkNeighbors, tspInit, tsp2Opt, tsp2OptPasses, stippleIterations, points } = e.data
+
+  if (type === 'RUN_PATH_ONLY') {
+    const pts = points || []
+    if (algorithm === 'Delaunay') {
+      self.postMessage({ type: 'RESULT', path: solveDelaunay(pts) })
+    } else {
+      self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts, lkNeighbors, tspInit, tsp2Opt, tsp2OptPasses) : pts })
+    }
+    return
+  }
+
   if (type === 'START') {
     if (algorithm === 'Dot matrix') {
       self.postMessage({ type: 'RESULT', path: dotMatrix(imageData, pointsPerLine || 100, dither || 'Floyd-Steinberg') })
@@ -407,14 +817,15 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       ) })
     } else {
       const isDelaunay = algorithm === 'Delaunay'
-      const iters = isDelaunay 
+      const iters = stippleIterations || (isDelaunay 
         ? (pointCount > 50000 ? 5 : 10) 
-        : (pointCount > 50000 ? 15 : (pointCount > 10000 ? 30 : 45))
+        : (pointCount > 50000 ? 10 : (pointCount > 10000 ? 15 : 20)))
       const pts = weightedVoronoiStippling(imageData, pointCount, iters, spacingMin, spacingMax, !!clipWhite)
+      self.postMessage({ type: 'STIPPLED_POINTS', points: pts })
       if (algorithm === 'Delaunay') {
         self.postMessage({ type: 'RESULT', path: solveDelaunay(pts) })
       } else {
-        self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts, imageData, !!clipWhite) : pts })
+        self.postMessage({ type: 'RESULT', path: (algorithm === 'TSP') ? solveTSP(pts, lkNeighbors, tspInit, tsp2Opt, tsp2OptPasses) : pts })
       }
     }
   }

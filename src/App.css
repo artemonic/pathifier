@@ -827,3 +827,15 @@ footer a:hover {
 footer img {
   vertical-align: middle;
 }
+
+.path-stats {
+  font-size: 0.85rem;
+  color: #aaa;
+  text-align: center;
+  margin-top: 0.8rem;
+  font-weight: 500;
+}
+
+.path-stats strong {
+  color: #ff8c00;
+}

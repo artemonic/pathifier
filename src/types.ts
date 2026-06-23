@@ -44,4 +44,12 @@ export interface Settings {
   // Delaunay/Stippling Specific
   spacingMin: number;
   spacingMax: number;
+  // TSP solver settings
+  lkNeighbors: number;
+  tspInit: 'random' | 'hilbert' | 'nearestNeighbor' | 'farthestInsertion';
+  tsp2Opt: boolean;
+  tsp2OptPasses: number;
+  cullJumps: boolean;
+  cullMaxDistance: number;
+  stippleIterations: number;
 }

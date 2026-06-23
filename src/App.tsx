@@ -43,6 +43,13 @@ function App() {
     oscMode: 'linear',
     spacingMin: 2,
     spacingMax: 10,
+    lkNeighbors: 8,
+    tspInit: 'farthestInsertion',
+    tsp2Opt: true,
+    tsp2OptPasses: 5,
+    cullJumps: false,
+    cullMaxDistance: 100,
+    stippleIterations: 20,
   })
   const [autoProcess, setAutoProcess] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -173,6 +180,7 @@ function App() {
             onExportSVG={handleExportSVG}
             isProcessing={isProcessing}
             hasPath={currentPath.length > 0}
+            pathCount={currentPath.length}
           />
         </aside>
       </main>

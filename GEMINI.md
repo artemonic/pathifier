@@ -29,8 +29,8 @@ Pathifier generates organic, non-intersecting continuous line drawings (TSP art)
 - **Modal Buttons**: Standardized 42px height. Green (`#2e7d32`) for "Apply", Blue-Gray (`#5c7a92`) for "No Crop".
 
 ### Path Processing
-- **Smoothing**: Combined Moving Average + Chaikin. Range [0, 1].
-- **Segmentation**: Paths are broken into multiple segments (`Point[][]`) if any step exceeds `maxLineLength`.
+- **Smoothing**: Combined Moving Average + Chaikin. Range [0, 1]. Applied to path segments *after* culling/segmentation to prevent distortion near cut gaps.
+- **Segmentation**: Paths are broken into multiple segments (`Point[][]`) if any step exceeds `maxLineLength`. For TSP paths, a dedicated "Cull Long Jumps" toggle and `cullMaxDistance` setting filters out long jumps between distant clusters.
 - **Delaunay Culling**: `maxLineLength` is used to hide (cull) long edges in the triangulation mesh.
 - **Default Weights**: `lineWidth` defaults: 3.0 for Dots, 2.0 for TSP/Oscillations, 1.0 for Delaunay.
 - **Rerun Logic**: Algorithm reruns (worker restarts) are triggered by core settings. Post-processing changes (lineWidth, smoothing, maxLineLength) are instant.
@@ -40,7 +40,7 @@ Pathifier generates organic, non-intersecting continuous line drawings (TSP art)
 - **Stippling**: Weighted Voronoi with sub-pixel jittered integration.
 - **WVS Optimization**: Uses a high-performance **Linked-List Grid** (Int32Array) to minimize memory allocations.
 - **Delaunay Speed**: Fast half-edge traversal for unique edge extraction. Non-linear weight mapping (gamma 1.5) for increased highlight sparsity.
-- **TSP Solver**: 2-opt with **Euclidean distance** and Hilbert-curve initialization.
+- **TSP Solver**: Hill-Climbing heuristic with random, Hilbert, or Nearest Neighbor initialization, and 2-opt swap candidates using nearest neighbors.
 - **Concurrency**: Web Workers are immediately terminated on core settings changes.
 
 ### Grading & Vignette

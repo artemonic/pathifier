@@ -53,6 +53,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   
   const lastTriggerRef = useRef(processTrigger)
   const lastStopTriggerRef = useRef(stopTrigger)
+  const cachedStipplesRef = useRef<{ points: Point[]; key: string } | null>(null)
 
   // Reset path when algorithm changes to avoid type mismatches during transition
   useEffect(() => {
@@ -115,11 +116,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     if (settings.algorithm === 'Delaunay') {
       if (!Array.isArray(rawPath[0])) return // Safety
-      // Delaunay edges are already discrete, but we can smooth them and apply maxLineLength culling
-      const segments = (rawPath as Point[][]).flatMap(seg => {
-        const smoothed = smoothPath(seg, settings.smoothing)
-        return segmentPath(smoothed, settings.maxLineLength)
-      })
+      // Cull Delaunay edges that exceed maxLineLength first, then smooth the remaining ones
+      const segments = (rawPath as Point[][])
+        .filter(seg => {
+          if (seg.length < 2) return false
+          const d = Math.sqrt((seg[0].x - seg[1].x) ** 2 + (seg[0].y - seg[1].y) ** 2)
+          return d <= settings.maxLineLength
+        })
+        .map(seg => smoothPath(seg, settings.smoothing))
       onPathGenerated(segments)
       setSmoothedPath(segments)
       return
@@ -127,18 +131,24 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     // TSP or Oscillations
     if (Array.isArray(rawPath[0])) return // Safety
-    const smoothingFactor = settings.smoothing
-    const smoothed = smoothPath(rawPath as Point[], smoothingFactor)
     
-    const segments = segmentPath(smoothed, settings.maxLineLength)
+    const maxLen = (settings.algorithm === 'TSP' && settings.cullJumps) 
+      ? settings.cullMaxDistance 
+      : settings.maxLineLength
+      
+    const rawSegments = segmentPath(rawPath as Point[], maxLen)
+    
+    const smoothingFactor = settings.smoothing
+    const segments = rawSegments.map(seg => smoothPath(seg, smoothingFactor))
     
     onPathGenerated(segments)
     setSmoothedPath(segments)
-  }, [rawPath, settings.smoothing, settings.maxLineLength, onPathGenerated, settings.algorithm, isStipplePhase])
+  }, [rawPath, settings.smoothing, settings.maxLineLength, settings.cullJumps, settings.cullMaxDistance, onPathGenerated, settings.algorithm, isStipplePhase])
 
   // Load Image and Initial Canvas Setup
   useEffect(() => {
     if (!image) return
+    cachedStipplesRef.current = null
     
     const updateCanvasSize = () => {
       imageProcessorRef.current.loadImage(image).then(img => {
@@ -208,6 +218,25 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   useEffect(() => {
     if (!originalImage || canvasSize.width === 0) return
 
+    const isStippleAlg = settings.algorithm === 'TSP' || settings.algorithm === 'Delaunay'
+    const stippleKey = isStippleAlg ? JSON.stringify({
+      image,
+      pointCount: settings.pointCount,
+      clipWhite: settings.clipWhite,
+      spacingMin: settings.spacingMin,
+      spacingMax: settings.spacingMax,
+      stippleIterations: settings.stippleIterations,
+      blacks: settings.blacks,
+      whites: settings.whites,
+      midtones: settings.midtones,
+      contrast: settings.contrast,
+      invert: settings.invert,
+      vignetteAmount: settings.vignetteAmount,
+      vignetteMode: settings.vignetteMode,
+      vignetteWidth: settings.vignetteWidth,
+      vignetteBlur: settings.vignetteBlur,
+    }) : ''
+
     const runAlgorithm = () => {
       if (workerRef.current) {
         workerRef.current.terminate()
@@ -220,6 +249,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       workerRef.current.onmessage = (e) => {
         if (e.data.type === 'PROGRESS') {
           setProgress({ message: e.data.message, percent: e.data.percent })
+        } else if (e.data.type === 'STIPPLED_POINTS') {
+          cachedStipplesRef.current = {
+            points: e.data.points,
+            key: stippleKey
+          }
         } else if (e.data.type === 'INTERMEDIATE' || e.data.type === 'RESULT') {
           const resultPath = e.data.path
           const isStipple = !!e.data.isStipple
@@ -253,7 +287,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
       setIsProcessing(true)
       setIsStipplePhase(false)
-      setProgress({ message: 'Preparing image...', percent: 0 })
+
       
       const imageData = imageProcessorRef.current.processImage(
         originalImage, 
@@ -268,22 +302,39 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
         settings.vignetteBlur
       )
 
-      workerRef.current?.postMessage({
-        type: 'START',
-        imageData,
-        pointCount: settings.pointCount,
-        algorithm: settings.algorithm,
-        clipWhite: settings.clipWhite,
-        pointsPerLine: settings.pointsPerLine,
-        dither: settings.dither,
-        oscAmplitude: settings.oscAmplitude,
-        oscFrequencyLevels: settings.oscFrequencyLevels,
-        oscMaxFrequency: settings.oscMaxFrequency,
-        oscScanLines: settings.oscScanLines,
-        oscMode: settings.oscMode,
-        spacingMin: settings.spacingMin,
-        spacingMax: settings.spacingMax
-      })
+      const canBypass = isStippleAlg && cachedStipplesRef.current && cachedStipplesRef.current.key === stippleKey
+
+      if (canBypass && cachedStipplesRef.current) {
+        setProgress({ message: 'Planning path (cached)...', percent: 35 })
+        workerRef.current?.postMessage({
+          type: 'RUN_PATH_ONLY',
+          points: cachedStipplesRef.current.points,
+          imageData,
+          pointCount: settings.pointCount,
+          algorithm: settings.algorithm,
+          clipWhite: settings.clipWhite,
+          lkNeighbors: settings.lkNeighbors,
+          tspInit: settings.tspInit,
+          tsp2Opt: settings.tsp2Opt,
+          tsp2OptPasses: settings.tsp2OptPasses
+        })
+      } else {
+        setProgress({ message: 'Preparing image...', percent: 0 })
+        workerRef.current?.postMessage({
+          type: 'START',
+          imageData,
+          pointCount: settings.pointCount,
+          algorithm: settings.algorithm,
+          clipWhite: settings.clipWhite,
+          spacingMin: settings.spacingMin,
+          spacingMax: settings.spacingMax,
+          lkNeighbors: settings.lkNeighbors,
+          tspInit: settings.tspInit,
+          tsp2Opt: settings.tsp2Opt,
+          tsp2OptPasses: settings.tsp2OptPasses,
+          stippleIterations: settings.stippleIterations
+        })
+      }
     }
 
     if (autoProcess) {
@@ -321,6 +372,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     settings.vignetteBlur,
     settings.spacingMin,
     settings.spacingMax,
+    settings.lkNeighbors,
+    settings.tspInit,
+    settings.tsp2Opt,
+    settings.tsp2OptPasses,
+    settings.stippleIterations,
     processTrigger, 
     autoProcess, 
     setProgress, 
