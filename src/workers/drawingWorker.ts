@@ -97,7 +97,9 @@ function weightedVoronoiStippling(imageData: ImageData, targetPointCount: number
       }
     }
     for (let i = 0; i < currentPoints.length; i++) { if (counts[i] > 0) { currentPoints[i].x = sumsX[i]/counts[i]; currentPoints[i].y = sumsY[i]/counts[i] } }
-    if (iter % 5 === 0 || iter === iterations - 1) self.postMessage({ type: 'INTERMEDIATE', path: hilbertSort([...currentPoints]) })
+    if (iter % 5 === 0 || iter === iterations - 1) {
+      self.postMessage({ type: 'INTERMEDIATE', path: [...currentPoints], isStipple: true })
+    }
   }
   return currentPoints
 }

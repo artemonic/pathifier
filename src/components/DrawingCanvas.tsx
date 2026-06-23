@@ -49,6 +49,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 })
+  const [isStipplePhase, setIsStipplePhase] = useState(false)
   
   const lastTriggerRef = useRef(processTrigger)
   const lastStopTriggerRef = useRef(stopTrigger)
@@ -81,8 +82,8 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   const svgPathData = React.useMemo(() => {
     if (smoothedPath.length === 0) return ''
     
-    if (settings.algorithm === 'Dot matrix') {
-      if (settings.dotStyle === 'circles') {
+    if (isStipplePhase || settings.algorithm === 'Dot matrix') {
+      if (settings.dotStyle === 'circles' && !isStipplePhase) {
         const r = settings.circleDiameter / 2
         return smoothedPath.flat().map(p => `M ${p.x - r} ${p.y} a ${r} ${r} 0 1 0 ${r * 2} 0 a ${r} ${r} 0 1 0 ${-r * 2} 0`).join(' ')
       }
@@ -94,7 +95,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       return `M ${segment[0].x} ${segment[0].y} ` + 
              segment.slice(1).map(p => `L ${p.x} ${p.y}`).join(' ')
     }).join(' ')
-  }, [smoothedPath, settings.algorithm, settings.dotStyle, settings.circleDiameter])
+  }, [smoothedPath, settings.algorithm, settings.dotStyle, settings.circleDiameter, isStipplePhase])
 
   // Real-time smoothing and segmentation
   useEffect(() => {
@@ -104,7 +105,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       return
     }
 
-    if (settings.algorithm === 'Dot matrix') {
+    if (isStipplePhase || settings.algorithm === 'Dot matrix') {
       if (Array.isArray(rawPath[0])) return // Safety
       const segments = [rawPath as Point[]]
       onPathGenerated(segments)
@@ -133,7 +134,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     
     onPathGenerated(segments)
     setSmoothedPath(segments)
-  }, [rawPath, settings.smoothing, settings.maxLineLength, onPathGenerated, settings.algorithm])
+  }, [rawPath, settings.smoothing, settings.maxLineLength, onPathGenerated, settings.algorithm, isStipplePhase])
 
   // Load Image and Initial Canvas Setup
   useEffect(() => {
@@ -221,6 +222,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           setProgress({ message: e.data.message, percent: e.data.percent })
         } else if (e.data.type === 'INTERMEDIATE' || e.data.type === 'RESULT') {
           const resultPath = e.data.path
+          const isStipple = !!e.data.isStipple
+          setIsStipplePhase(isStipple)
+          
           if (originalImage && canvasSize.width > 0) {
             const scale = canvasSize.width / originalImage.width
             let scaledPath;
@@ -248,6 +252,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       }
 
       setIsProcessing(true)
+      setIsStipplePhase(false)
       setProgress({ message: 'Preparing image...', percent: 0 })
       
       const imageData = imageProcessorRef.current.processImage(
