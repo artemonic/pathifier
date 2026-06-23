@@ -332,7 +332,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           tspInit: settings.tspInit,
           tsp2Opt: settings.tsp2Opt,
           tsp2OptPasses: settings.tsp2OptPasses,
-          stippleIterations: settings.stippleIterations
+          stippleIterations: settings.stippleIterations,
+          pointsPerLine: settings.pointsPerLine,
+          dither: settings.dither,
+          oscAmplitude: settings.oscAmplitude,
+          oscFrequencyLevels: settings.oscFrequencyLevels,
+          oscMaxFrequency: settings.oscMaxFrequency,
+          oscScanLines: settings.oscScanLines,
+          oscMode: settings.oscMode
         })
       }
     }

@@ -43,16 +43,16 @@ const DEFAULTS: Partial<Settings> = {
   oscMode: 'linear',
   spacingMin: 2.0,
   spacingMax: 64.0,
-  lkNeighbors: 8,
+  lkNeighbors: 300,
   tspInit: 'farthestInsertion',
-  tsp2Opt: true,
+  tsp2Opt: false,
   tsp2OptPasses: 5,
   cullJumps: false,
   cullMaxDistance: 100,
-  stippleIterations: 20,
+  stippleIterations: 10,
 }
 
-const getContextDefault = (key: keyof Settings, algorithm: string, dotStyle: string, pointCount: number): any => {
+const getContextDefault = (key: keyof Settings, algorithm: string, dotStyle: string, _pointCount: number): any => {
   if (key === 'lineWidth') {
     if (algorithm === 'Dot matrix' && dotStyle === 'dots') {
       return 3.0
@@ -63,10 +63,7 @@ const getContextDefault = (key: keyof Settings, algorithm: string, dotStyle: str
     }
   }
   if (key === 'stippleIterations') {
-    const isDelaunay = algorithm === 'Delaunay'
-    return isDelaunay
-      ? (pointCount > 50000 ? 5 : 10)
-      : (pointCount > 50000 ? 10 : (pointCount > 10000 ? 15 : 20))
+    return 10
   }
   return DEFAULTS[key as keyof typeof DEFAULTS]
 }
@@ -101,11 +98,7 @@ const applySettingChange = (prev: Settings, key: keyof Settings, value: any, isD
   const next = { ...prev, [key]: finalValue }
   
   if (key === 'pointCount') {
-    const pc = finalValue as number
-    const isDelaunay = prev.algorithm === 'Delaunay'
-    next.stippleIterations = isDelaunay 
-      ? (pc > 50000 ? 5 : 10) 
-      : (pc > 50000 ? 10 : (pc > 10000 ? 15 : 20))
+    next.stippleIterations = 10
   }
   
   // Proportional midtone adjustment
@@ -661,30 +654,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                   </div>
                 </div>
 
-                <div className="controls-group">
-                  <div className="label-row">
-                    <div className="label-with-reset">
-                      <label>Max Iterations per Pass</label>
-                      <button className="reset-btn" onClick={() => resetSetting('stippleIterations')} title="Reset">
-                        <RotateCcw />
-                      </button>
-                    </div>
-                    <input 
-                      type="number" 
-                      value={settings.stippleIterations} 
-                      onChange={(e) => updateSetting('stippleIterations', parseInt(e.target.value) || 20, true)}
-                      className="number-input wide"
-                      step="5"
-                    />
-                  </div>
-                  <SliderWithArrows 
-                    min={5} 
-                    max={10000} 
-                    step={5}
-                    value={settings.stippleIterations} 
-                    onChange={(val, isDirect) => updateSetting('stippleIterations', val, isDirect)}
-                  />
-                </div>
+
 
                 {settings.algorithm === 'Delaunay' && (
                   <>
@@ -756,9 +726,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                         onChange={(e) => updateSetting('tspInit', e.target.value as any)}
                       >
                         <option value="farthestInsertion">Farthest Insertion (Organic, Low Crossing)</option>
-                        <option value="nearestNeighbor">Nearest Neighbor (Fast, Jagged)</option>
                         <option value="hilbert">Hilbert Curve (Instant, Grid-like)</option>
-                        <option value="random">Random Tour (Scribble)</option>
                       </select>
                     </div>
 
@@ -817,7 +785,7 @@ const Controls: React.FC<ControlsProps> = React.memo(({
                           </div>
                           <SliderWithArrows 
                             min={2} 
-                            max={20} 
+                            max={800} 
                             step={1}
                             value={settings.lkNeighbors} 
                             onChange={(val, isDirect) => updateSetting('lkNeighbors', val, isDirect)}

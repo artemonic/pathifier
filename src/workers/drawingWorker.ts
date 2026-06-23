@@ -280,33 +280,63 @@ function nearestNeighborTour(
   visited[curr] = 1
   
   for (let i = 1; i < n; i++) {
-    let bestDist = Infinity
     let bestIdx = -1
     const pCurr = points[curr]
     
     // Check precomputed neighbors of curr first
     const nStart = curr * M
+    const localCandidates: number[] = []
+    
     for (let k = 0; k < M; k++) {
       const neighbor = neighbors[nStart + k]
       if (neighbor === -1) break
       if (visited[neighbor] === 0) {
-        const d = getCost(pCurr, points[neighbor])
-        if (d < bestDist) {
-          bestDist = d
-          bestIdx = neighbor
-        }
+        localCandidates.push(neighbor)
+        if (localCandidates.length >= 3) break
       }
     }
     
-    // Fallback to full scan if no unvisited neighbor is found
-    if (bestIdx === -1) {
+    if (localCandidates.length > 0) {
+      // Choose randomly among the top candidates, biased towards the closest
+      const r = Math.random()
+      if (r < 0.7 || localCandidates.length === 1) {
+        bestIdx = localCandidates[0]
+      } else if (r < 0.9 || localCandidates.length === 2) {
+        bestIdx = localCandidates[1]
+      } else {
+        bestIdx = localCandidates[2]
+      }
+    } else {
+      // Fallback to full scan if no unvisited neighbor is found
+      const topNeighbors: number[] = []
+      const topDists: number[] = []
+      
       for (let j = 0; j < n; j++) {
         if (visited[j] === 0) {
           const d = getCost(pCurr, points[j])
-          if (d < bestDist) {
-            bestDist = d
-            bestIdx = j
+          if (topNeighbors.length < 3 || d < topDists[topDists.length - 1]) {
+            let ins = topNeighbors.length
+            while (ins > 0 && d < topDists[ins - 1]) {
+              ins--
+            }
+            topNeighbors.splice(ins, 0, j)
+            topDists.splice(ins, 0, d)
+            if (topNeighbors.length > 3) {
+              topNeighbors.pop()
+              topDists.pop()
+            }
           }
+        }
+      }
+      
+      if (topNeighbors.length > 0) {
+        const r = Math.random()
+        if (r < 0.7 || topNeighbors.length === 1) {
+          bestIdx = topNeighbors[0]
+        } else if (r < 0.9 || topNeighbors.length === 2) {
+          bestIdx = topNeighbors[1]
+        } else {
+          bestIdx = topNeighbors[2]
         }
       }
     }
@@ -504,9 +534,9 @@ function solveTSP(
     for (let i = 0; i < n; i++) tour[i] = insertionTour[i]
   } else if (initMethod === 'nearestNeighbor') {
     self.postMessage({ type: 'PROGRESS', message: 'Nearest Neighbor routing...', percent: 38 })
-    const M_nn = 5
+    const M_nn = 20
     const neighbors_nn = getNearestNeighbors(points, M_nn)
-    const nnTour = nearestNeighborTour(points, neighbors_nn, M_nn, getDist, 0)
+    const nnTour = nearestNeighborTour(points, neighbors_nn, M_nn, getDist, Math.floor(Math.random() * n))
     tour.set(nnTour)
   } else {
     // random tour
@@ -601,6 +631,98 @@ function solveTSP(
               }
               improved = true
               break
+            }
+          }
+
+          // If no local improvement was found from spatial neighbors, try checking a window in the tour sequence to resolve local loops and crossings
+          if (!improved) {
+            const W = Math.min(150, Math.max(20, Math.floor(n / 30)))
+            for (let k = 2; k <= W; k++) {
+              const j = (i + k) % n
+
+              // Order positions so start_pos < end_pos
+              let start_pos = i
+              let end_pos = j
+              if (end_pos < start_pos) {
+                const tmp = start_pos
+                start_pos = end_pos
+                end_pos = tmp
+              }
+
+              // Must not be adjacent edges
+              if (end_pos <= start_pos + 1 || (start_pos === 0 && end_pos === n - 1)) {
+                continue
+              }
+
+              const a = tour[start_pos]
+              const b = tour[start_pos + 1]
+              const c = tour[end_pos]
+              const d = tour[(end_pos + 1) % n]
+
+              const currentCost = getDist(points[a], points[b]) + getDist(points[c], points[d])
+              const newCost = getDist(points[a], points[c]) + getDist(points[b], points[d])
+              const delta = newCost - currentCost
+
+              if (delta < -0.001) {
+                let l = start_pos + 1
+                let r = end_pos
+                while (l < r) {
+                  const temp = tour[l]
+                  tour[l] = tour[r]
+                  tour[r] = temp
+                  pos[tour[l]] = l
+                  pos[tour[r]] = r
+                  l++
+                  r--
+                }
+                improved = true
+                break
+              }
+            }
+          }
+
+          // If no local or tour-sequence improvement was found, try a few random swaps to resolve global crossings
+          if (!improved) {
+            for (let k = 0; k < 5; k++) {
+              const j = Math.floor(Math.random() * n)
+              if (j === i) continue
+
+              let start_pos = i
+              let end_pos = j
+              if (end_pos < start_pos) {
+                const tmp = start_pos
+                start_pos = end_pos
+                end_pos = tmp
+              }
+
+              if (end_pos <= start_pos + 1 || (start_pos === 0 && end_pos === n - 1)) {
+                continue
+              }
+
+              const a = tour[start_pos]
+              const b = tour[start_pos + 1]
+              const c = tour[end_pos]
+              const d = tour[(end_pos + 1) % n]
+
+              const currentCost = getDist(points[a], points[b]) + getDist(points[c], points[d])
+              const newCost = getDist(points[a], points[c]) + getDist(points[b], points[d])
+              const delta = newCost - currentCost
+
+              if (delta < -0.001) {
+                let l = start_pos + 1
+                let r = end_pos
+                while (l < r) {
+                  const temp = tour[l]
+                  tour[l] = tour[r]
+                  tour[r] = temp
+                  pos[tour[l]] = l
+                  pos[tour[r]] = r
+                  l++
+                  r--
+                }
+                improved = true
+                break
+              }
             }
           }
         }
@@ -816,10 +938,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         oscMode || 'linear'
       ) })
     } else {
-      const isDelaunay = algorithm === 'Delaunay'
-      const iters = stippleIterations || (isDelaunay 
-        ? (pointCount > 50000 ? 5 : 10) 
-        : (pointCount > 50000 ? 10 : (pointCount > 10000 ? 15 : 20)))
+      const iters = stippleIterations || 10
       const pts = weightedVoronoiStippling(imageData, pointCount, iters, spacingMin, spacingMax, !!clipWhite)
       self.postMessage({ type: 'STIPPLED_POINTS', points: pts })
       if (algorithm === 'Delaunay') {

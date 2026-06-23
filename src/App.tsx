@@ -43,13 +43,13 @@ function App() {
     oscMode: 'linear',
     spacingMin: 2,
     spacingMax: 10,
-    lkNeighbors: 8,
+    lkNeighbors: 300,
     tspInit: 'farthestInsertion',
-    tsp2Opt: true,
+    tsp2Opt: false,
     tsp2OptPasses: 5,
     cullJumps: false,
     cullMaxDistance: 100,
-    stippleIterations: 20,
+    stippleIterations: 10,
   })
   const [autoProcess, setAutoProcess] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)

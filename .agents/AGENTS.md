@@ -7,3 +7,7 @@
     1. Yes, commit with the suggested message.
     2. Yes, commit with a custom message (prompt me for it).
     3. No, do not commit.
+
+## Command Permissions
+*   **Command Approval Preference:** When the system prompts for command permissions, the user's preference is to always choose Option 3: "Yes, and always allow for commands that start with...".
+
